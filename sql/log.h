@@ -860,6 +860,10 @@ public:
   int purge_first_log(Relay_log_info* rli, bool included);
   int set_purge_index_file_name(const char *base_file_name);
   int open_purge_index_file(bool destroy);
+  bool truncate_and_remove_binlogs(const char *truncate_file,
+                                   my_off_t truncate_pos,
+                                   rpl_gtid *gtid,
+                                   enum_binlog_checksum_alg cs_alg);
   bool is_inited_purge_index_file();
   int close_purge_index_file();
   int clean_purge_index_file();

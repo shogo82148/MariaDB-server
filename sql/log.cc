@@ -58,7 +58,10 @@
 #include "wsrep_mysqld.h"
 #include "sp_rcontext.h"
 #include "sp_head.h"
-
+#ifdef HAVE_REPLICATION
+#include "semisync_master.h"
+#include "semisync_slave.h"
+#endif
 /* max size of the log message */
 #define MAX_LOG_BUFFER_SIZE 1024
 #define MAX_TIME_SIZE 32
@@ -7977,6 +7980,7 @@ MYSQL_BIN_LOG::trx_group_commit_leader(group_commit_entry *leader)
 #endif
       }
 
+      DEBUG_SYNC(leader->thd, "commit_before_update_end_pos");
       /*
         update binlog_end_pos so it can be read by dump thread
         Note: must be _after_ the RUN_HOOK(after_flush) or else
@@ -9611,6 +9615,180 @@ int TC_LOG::using_heuristic_recover()
 /****** transaction coordinator log for 2pc - binlog() based solution ******/
 #define TC_LOG_BINLOG MYSQL_BIN_LOG
 
+/**
+  Truncates the current binlog to specified position. Removes the rest of binlogs
+  which are present after this binlog file.
+
+  @param  truncate_file    Holds the binlog name to be truncated
+  @param  truncate_pos     Position within binlog from where it needs to
+                           truncated.
+
+  @retval true             ok
+  @retval false            error
+
+*/
+bool MYSQL_BIN_LOG::truncate_and_remove_binlogs(const char *file_name,
+                                                my_off_t pos,
+                                                rpl_gtid *ptr_gtid,
+                                                enum_binlog_checksum_alg cs_alg)
+{
+  int error= 0;
+#ifdef HAVE_REPLICATION
+  LOG_INFO log_info;
+  THD *thd= current_thd;
+  my_off_t index_file_offset= 0;
+  File file= -1;
+  IO_CACHE cache;
+  MY_STAT s;
+
+  if ((error= find_log_pos(&log_info, file_name, 1)))
+  {
+    sql_print_error("Failed to locate binary log file:%s."
+                    "Error:%d", file_name, error);
+    goto end;
+  }
+
+  while (!(error= find_next_log(&log_info, 1)))
+  {
+    if (!index_file_offset)
+    {
+      index_file_offset= log_info.index_file_start_offset;
+      if ((error= open_purge_index_file(TRUE)))
+      {
+        sql_print_error("Failed to open purge index "
+                        "file:%s. Error:%d", purge_index_file_name, error);
+        goto end;
+      }
+    }
+    if ((error= register_purge_index_entry(log_info.log_file_name)))
+    {
+      sql_print_error("Failed to copy %s to purge index"
+                      " file. Error:%d", log_info.log_file_name, error);
+      goto end;
+    }
+  }
+
+  if (error != LOG_INFO_EOF)
+  {
+    sql_print_error("Failed to find the next binlog to "
+                    "add to purge index register. Error:%d", error);
+    goto end;
+  }
+
+  if (is_inited_purge_index_file())
+  {
+    if (!index_file_offset)
+      index_file_offset= log_info.index_file_start_offset;
+
+    if ((error= sync_purge_index_file()))
+    {
+      sql_print_error("Failed to flush purge index "
+                      "file. Error:%d", error);
+      goto end;
+    }
+
+    // Trim index file
+    if ((error=
+         mysql_file_chsize(index_file.file, index_file_offset, '\n',
+                           MYF(MY_WME))) ||
+         (error=
+         mysql_file_sync(index_file.file, MYF(MY_WME|MY_SYNC_FILESIZE))))
+    {
+      sql_print_error("Failed to trim binlog index "
+                      "file:%s to offset:%llu. Error:%d", index_file_name,
+                      index_file_offset, error);
+      goto end;
+    }
+
+    /* Reset data in old index cache */
+    if ((error= reinit_io_cache(&index_file, READ_CACHE, (my_off_t) 0, 0, 1)))
+    {
+      sql_print_error("Failed to reinit binlog index "
+                      "file. Error:%d", error);
+      goto end;
+    }
+
+    /* Read each entry from purge_index_file and delete the file. */
+    if ((error= purge_index_entry(thd, NULL, TRUE)))
+    {
+      sql_print_error("Failed to process registered "
+                      "files that would be purged.");
+      goto end;
+    }
+  }
+
+  DBUG_ASSERT(pos);
+
+  if ((file= mysql_file_open(key_file_binlog, file_name,
+                             O_RDWR | O_BINARY, MYF(MY_WME))) < 0)
+  {
+    error= 1;
+    sql_print_error("Failed to open binlog file:%s for "
+                    "truncation.", file_name);
+    goto end;
+  }
+  my_stat(file_name, &s, MYF(0));
+
+  /* Change binlog file size to truncate_pos */
+  if ((error=
+       mysql_file_chsize(file, pos, 0, MYF(MY_WME))) ||
+      (error= mysql_file_sync(file, MYF(MY_WME|MY_SYNC_FILESIZE))))
+  {
+    sql_print_error("Failed to trim the "
+                    "binlog file:%s to size:%llu. Error:%d",
+                    file_name, pos, error);
+    goto end;
+  }
+  else
+  {
+    char buf[21];
+
+    longlong10_to_str(ptr_gtid->seq_no, buf, 10);
+    sql_print_information("Successfully truncated binlog file:%s "
+                          "to pos:%llu to remove transactions starting from "
+                          "GTID %u-%u-%s", file_name, pos,
+                          ptr_gtid->domain_id, ptr_gtid->server_id, buf);
+  }
+  if (!(error= init_io_cache(&cache, file, IO_SIZE, WRITE_CACHE,
+                            (my_off_t) pos, 0, MYF(MY_WME|MY_NABP))))
+  {
+    /*
+      Write Stop_log_event to ensure clean end point for the binary log being
+      truncated.
+    */
+    Stop_log_event se;
+    se.checksum_alg= cs_alg;
+    if ((error= write_event(&se, NULL, &cache)))
+    {
+      sql_print_error("Failed to write stop event to "
+                      "binary log. Errno:%d",
+                      (cache.error == -1) ? my_errno : error);
+      goto end;
+    }
+    clear_inuse_flag_when_closing(cache.file);
+    if ((error= flush_io_cache(&cache)) ||
+        (error= mysql_file_sync(file, MYF(MY_WME|MY_SYNC_FILESIZE))))
+    {
+      sql_print_error("Faild to write stop event to "
+                      "binary log. Errno:%d",
+                      (cache.error == -1) ? my_errno : error);
+    }
+  }
+  else
+      sql_print_error("Failed to initialize binary log "
+                      "cache for writing stop event. Errno:%d",
+                      (cache.error == -1) ? my_errno : error);
+
+end:
+  if (file >= 0)
+  {
+    end_io_cache(&cache);
+    mysql_file_close(file, MYF(MY_WME));
+  }
+  error= error || close_purge_index_file();
+#endif
+  return error > 0;
+}
 int TC_LOG_BINLOG::open(const char *opt_name)
 {
   int      error= 1;
@@ -10046,22 +10224,73 @@ start_binlog_background_thread()
 
 int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
                            IO_CACHE *first_log,
-                           Format_description_log_event *fdle, bool do_xa)
+                           Format_description_log_event *fdle_arg, bool do_xa)
 {
   Log_event *ev= NULL;
   HASH xids;
   MEM_ROOT mem_root;
   char binlog_checkpoint_name[FN_REFLEN];
   bool binlog_checkpoint_found;
-  bool first_round;
   IO_CACHE log;
   File file= -1;
   const char *errmsg;
+  Format_description_log_event *fdle= fdle_arg;
 #ifdef HAVE_REPLICATION
-  rpl_gtid last_gtid;
+  rpl_gtid last_gtid, truncate_gtid;
   bool last_gtid_standalone= false;
   bool last_gtid_valid= false;
+  uint last_gtid_engines= 0;
+  /*
+    When true, it's semisync slave recovery mode
+    rolls back transactions in doubt and wipes them off from binlog.
+  */
+  bool do_truncate= rpl_semi_sync_slave_enabled;
+  char binlog_truncate_file_name[FN_REFLEN] = {0};
+  char binlog_unsafe_file_name[FN_REFLEN] = {0};
+  my_off_t binlog_truncate_pos= 0, last_gtid_pos= 0, prev_pos= 0;
+  my_off_t binlog_unsafe_pos= 0;
+  /*
+    When do_truncate is true, the truncate position may not be
+    found in one round when recovere transactions are multi-engine
+    or just on different engines.
+    In the single recoverable engine case `truncate_reset_done` and
+    therefore `truncate_validated` remain `false' when the last
+    binlog is the binlog-checkpoint one.
+    The meaning of `truncate_reset_done` is according to the following example:
+    Let round = 1, Binlog contains the sequence of replication event groups:
+    [g1, G2, g3]
+    where `G` (in capital) stands for committed, `g` for prepared.
+    g1 is first set as truncation candidate, then G2 reset it to indicate
+    the actual truncation is behind (to the right of) it.
+    `truncate_validated` is set to true when `binlog_truncate_pos` (as of g3)
+    won't change.
+    Observe last_gtid_valid is affected, so in the above example g1
+    would have to be discarded from the binlog state which is handled by
+    the 2nd round (see below).
+  */
+  bool truncate_validated= false;  // trued when the truncate position settled
+  bool truncate_reset_done= false; // trued when the position is to reevaluate
+  /* Flags the fact of truncate position estimation is done the 1st round */
+  bool truncate_set_in_1st= false;
+  uint id_binlog= UINT_MAX, id_binlog_truncate= UINT_MAX;
+  uint id_binlog_unsafe= UINT_MAX;
+  enum_binlog_checksum_alg cs_alg; // for Stop_event with do_truncate
 #endif
+  /*
+    The for-loop variable is updated by the following rule set:
+    Initially set to 1.
+    After the initial binlog file is processed to identify
+    the Binlog-checkpoint file it is incremented when the latter file
+    is different from the initial one. Otherwise the only log has been
+    fully parsed and the loop exits.
+    The 2nd starts with the Binlog-checkpoint file and ends when the initial
+    binlog file is reached. It is excluded from yet another processing
+    in the "normal" non-semisync-slave configuration, and then the loop is
+    done at this point. Otherwise in the semisync slave case it may be parsed
+    over again. The 2nd round may turn to a third in "unlikely" condition of the
+    semisync-slave is being recovered having multi-engine transactions in doubt.
+  */
+  int round;
 
   if (! fdle->is_valid() ||
       (do_xa && my_hash_init(&xids, &my_charset_bin, TC_LOG_PAGE_SIZE/3, 0,
@@ -10074,39 +10303,185 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
 
   fdle->flags&= ~LOG_EVENT_BINLOG_IN_USE_F; // abort on the first error
 
+  /* finds xids when root is not NULL */
+  if (do_xa && ha_recover(&xids, &mem_root))
+    goto err1;
+
   /*
     Scan the binlog for XIDs that need to be committed if still in the
     prepared stage.
 
     Start with the latest binlog file, then continue with any other binlog
     files if the last found binlog checkpoint indicates it is needed.
+
+    In case the semisync slave recovery the 2nd round may include
+    the initial file as well as cause a 3rd round when transactions
+    with multiple engines are discovered.
+    Additionally to find and decide on transactions in doubt that
+    the semisync slave may need to roll back, the binlog can be truncated
+    in the end to reflect the rolled back decisions.
   */
 
   binlog_checkpoint_found= false;
-  first_round= true;
-  for (;;)
+  for (round= 1;;)
   {
-    while ((ev= Log_event::read_log_event(first_round ? first_log : &log,
+    while ((ev= Log_event::read_log_event(round == 1 ? first_log : &log,
                                           fdle, opt_master_verify_checksum))
            && ev->is_valid())
     {
       enum Log_event_type typ= ev->get_type_code();
       switch (typ)
       {
-      case XID_EVENT:
-      {
-        if (do_xa)
+      case FORMAT_DESCRIPTION_EVENT:
+        if (round > 1)
         {
-          Xid_log_event *xev=(Xid_log_event *)ev;
-          uchar *x= (uchar *) memdup_root(&mem_root, (uchar*) &xev->xid,
-                                          sizeof(xev->xid));
-          if (!x || my_hash_insert(&xids, x))
-            goto err2;
+          if (fdle != fdle_arg)
+            delete fdle;
+          fdle= (Format_description_log_event*) ev;
         }
         break;
+      case XID_EVENT:
+      if (do_xa)
+      {
+        xid_recovery_member *member;
+
+        if ((member= (xid_recovery_member*)
+             my_hash_search(&xids,
+                            (uchar*) &static_cast<Xid_log_event*>(ev)->xid,
+                            sizeof(my_xid))) != NULL)
+#ifndef HAVE_REPLICATION
+        {
+          member->in_engine_prepare= 0; // destined to commit
+        }
+#else
+        {
+          DBUG_EXECUTE_IF("binlog_truncate_partial_commit",
+                          if (last_gtid_engines == 2)
+                          {
+                            DBUG_ASSERT(member->in_engine_prepare > 0);
+                            member->in_engine_prepare= 1;
+                          });
+          /*
+            xid in doubt are resolved as follows:
+            in_engine_prepare is examined and set to/left to stay as zero
+            for the commit decision, or set to one for the rollback.
+          */
+          if (member->in_engine_prepare > last_gtid_engines)
+          {
+            char buf[21];
+            longlong10_to_str(last_gtid.seq_no, buf, 10);
+            sql_print_error("Error to recovery multi-engine transaction: "
+                            "the number of engines prepared %u exceeds the "
+                            "respective number %u in its GTID %u-%u-%s "
+                            "located at file:%s pos:%llu",
+                            member->in_engine_prepare, last_gtid_engines,
+                            last_gtid.domain_id, last_gtid.server_id, buf,
+                            linfo->log_file_name, last_gtid_pos);
+            goto err2;
+          }
+          else if (member->in_engine_prepare < last_gtid_engines)
+          {
+            /*
+              This is an "unlikely" branch of two or more engines in transaction
+              that is partially committed, so to complete.
+            */
+            member->in_engine_prepare= 0;
+
+            if (do_truncate)
+            {
+              /*
+                the 1st round validated truncate pos may not change later.
+                Any "unlikely" (two or more engines in transaction) reset
+                to not-validated yet position ensues correcting early
+                estimates, *within*  either round.
+              */
+              if (!truncate_validated && binlog_truncate_pos > 0)
+              {
+                binlog_truncate_pos= 0; // reset possible early estimate
+                truncate_reset_done= true;
+              }
+            }
+          }
+          else // member->in_engine_prepare == last_gtid_engines
+          {
+            if (!do_truncate) // "normal" recovery
+            {
+              member->in_engine_prepare= 0;
+            }
+            else
+            {
+              /*
+                The first time or further estimate the truncate position
+                until validation. Already set not validated yet postion
+                may change only through previous reset
+                unless this xid in doubt is the first in the 2nd round.
+              */
+              if (binlog_truncate_pos == 0 ||
+                  (!truncate_validated && truncate_set_in_1st && round == 2))
+              {
+                DBUG_ASSERT(round <= 2);
+                /*
+                  Either binlog_truncate_pos not set, or
+                  it gets incremented within the current round, or
+                  it's "improved" after being set in the 1st round.
+                */
+                DBUG_ASSERT(binlog_truncate_pos == 0 ||
+                            (id_binlog > id_binlog_truncate ||
+                             (id_binlog == id_binlog_truncate &&
+                              last_gtid_pos > binlog_truncate_pos)) ||
+                            (round == 2 && truncate_set_in_1st));
+                /*
+                  In multi-engine case binlog_truncate_pos may be guessed
+                  and reset (in other branch) multiple times until is settled.
+                  [The single engine case can be optimized to set the truncate
+                  offset two times at most (todo)].
+                */
+                binlog_truncate_pos= last_gtid_pos;
+                strmake_buf(binlog_truncate_file_name, linfo->log_file_name);
+                id_binlog_truncate= id_binlog;
+                last_gtid_valid= false;       // may still (see gtid) flip later
+                truncate_gtid= last_gtid;
+                cs_alg= fdle->checksum_alg;
+                member->in_engine_prepare= 1; // may flip later
+                truncate_set_in_1st= (round == 1);
+              }
+              else if (truncate_validated)
+              {
+                DBUG_ASSERT(!truncate_reset_done); // the position was settled
+                /*
+                  Correct earlier decisions of 1st and/or 2nd round to
+                  rollback and invalidate last_gtid in binlog state.
+                */
+                member->in_engine_prepare=
+                  id_binlog < id_binlog_truncate ||
+                  (id_binlog == id_binlog_truncate &&
+                   last_gtid_pos < binlog_truncate_pos) ? 0 : 1;
+                if (member->in_engine_prepare == 1)
+                  last_gtid_valid= false;    // settled
+              }
+            }
+          }
+        }
+        else if (do_truncate) //  "0" < last_gtid_engines
+        {
+          /*
+            Similar to the multi-engine partial commit of "then" branch above.
+            The 2nd condition economizes away an extra (3rd) round in
+            expected cases of first xid:s in the binlog checkpoint file
+            are actually of committed transactions. So fully committed
+            xid sequence is passed in this branch without any action.
+          */
+          if (!truncate_validated && binlog_truncate_pos > 0)
+          {
+            binlog_truncate_pos= 0;
+            truncate_reset_done= true;
+          }
+        }
+#endif
       }
+      break;
       case BINLOG_CHECKPOINT_EVENT:
-        if (first_round && do_xa)
+        if (round == 1 && do_xa)
         {
           size_t dir_len;
           Binlog_checkpoint_log_event *cev= (Binlog_checkpoint_log_event *)ev;
@@ -10126,8 +10501,9 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
           }
         }
         break;
+#ifdef HAVE_REPLICATION
       case GTID_LIST_EVENT:
-        if (first_round)
+        if (round == 1 || (do_truncate && id_binlog == 0))
         {
           Gtid_list_log_event *glev= (Gtid_list_log_event *)ev;
 
@@ -10137,9 +10513,7 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
         }
         break;
 
-#ifdef HAVE_REPLICATION
       case GTID_EVENT:
-        if (first_round)
         {
           Gtid_log_event *gev= (Gtid_log_event *)ev;
 
@@ -10147,9 +10521,33 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
           last_gtid.domain_id= gev->domain_id;
           last_gtid.server_id= gev->server_id;
           last_gtid.seq_no= gev->seq_no;
-          last_gtid_standalone=
-            ((gev->flags2 & Gtid_log_event::FL_STANDALONE) ? true : false);
-          last_gtid_valid= true;
+          if (round == 1 || do_truncate)
+          {
+            last_gtid_standalone=
+              (gev->flags2 & Gtid_log_event::FL_STANDALONE) ? true : false;
+            last_gtid_valid= true; // may flip at Xid when do_truncate
+          }
+          last_gtid_engines= gev->extra_engines + 1;
+          if (do_truncate)
+          {
+            if (gev->flags2 & Gtid_log_event::FL_TRANSACTIONAL)
+            {
+              last_gtid_pos= prev_pos;
+            }
+            else
+            {
+              if (binlog_unsafe_pos == 0 ||
+                  (id_binlog > id_binlog_unsafe ||
+                   (id_binlog == id_binlog_unsafe &&
+                    prev_pos > binlog_unsafe_pos)))
+              {
+                /* the current one is greater than ever before, increment it */
+                binlog_unsafe_pos= prev_pos;
+                strmake_buf(binlog_unsafe_file_name, linfo->log_file_name);
+                id_binlog_unsafe= id_binlog;
+              }
+            }
+          }
         }
         break;
 #endif
@@ -10164,7 +10562,7 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
       default:
         /* Nothing. */
         break;
-      }
+      } // end of switch
 
 #ifdef HAVE_REPLICATION
       if (last_gtid_valid &&
@@ -10175,15 +10573,18 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
               (((Query_log_event *)ev)->is_commit() ||
                ((Query_log_event *)ev)->is_rollback()))))))
       {
+        DBUG_ASSERT(round == 1 || do_truncate);
+
         if (rpl_global_gtid_binlog_state.update_nolock(&last_gtid, false))
           goto err2;
         last_gtid_valid= false;
       }
+      prev_pos= ev->log_pos;
 #endif
-
-      delete ev;
+      if (typ != FORMAT_DESCRIPTION_EVENT)
+        delete ev;
       ev= NULL;
-    }
+    } // end of while
 
     if (!do_xa)
       break;
@@ -10195,11 +10596,10 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
       written by an older version of MariaDB (or MySQL) - these always have an
       (implicit) binlog checkpoint event at the start of the last binlog file.
     */
-    if (first_round)
+    if (round == 1)
     {
       if (!binlog_checkpoint_found)
         break;
-      first_round= false;
       DBUG_EXECUTE_IF("xa_recover_expect_master_bin_000004",
           if (0 != strcmp("./master-bin.000004", binlog_checkpoint_name) &&
               0 != strcmp(".\\master-bin.000004", binlog_checkpoint_name))
@@ -10219,35 +10619,152 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
       file= -1;
     }
 
+#ifdef HAVE_REPLICATION
     if (!strcmp(linfo->log_file_name, last_log_name))
-      break;                                    // No more files to do
+    {
+      /* Either exit the loop now, or increment round */
+      DBUG_ASSERT(round <= 3);
+
+      if ((round <= 2 && likely(!truncate_reset_done)) || round == 3)
+      {
+        // Exit now as the 1st round ends up with the binlog-checkpoint file
+        // is the same as the initial binlog file, so already parsed; or
+        // the 2nd round has not made own truncate_reset_done; or
+        // at the end of the 3rd "truncate" round.
+        DBUG_ASSERT(do_truncate || round == 1);
+        // The 3rd round is done only when the 2nd trued truncate_reset_done
+        // and consequently truncate_validated.
+        // No instances of truncate_reset_done in first 2 rounds allows
+        // for existing now.
+        DBUG_ASSERT(round < 3 || truncate_validated);
+
+        break;
+      }
+      else
+      {
+        DBUG_ASSERT(do_truncate);
+        /*
+          the last binlog file, having truncate_reset_done to indicate
+          correction affected member->in_engine_prepare to reflect
+          changed binlog_truncate_pos.
+          The pair of
+          (id_binlog,binlog_truncate_pos) defines the truncate coordinate
+          accross the binlog sequence of offsets.
+        */
+        truncate_reset_done= false;
+        truncate_validated= true;
+        rpl_global_gtid_binlog_state.reset_nolock();
+        id_binlog= 0;
+
+        if (round > 1 &&
+            find_log_pos(linfo, binlog_checkpoint_name, 1))
+        {
+          sql_print_error("Binlog file '%s' not found in binlog index, needed "
+                          "for recovery. Aborting.", binlog_checkpoint_name);
+          goto err2;
+        }
+        round++;
+      }
+    }
+    else if (round == 1)
+    {
+      if (do_truncate)
+      {
+        truncate_validated= truncate_reset_done;
+        rpl_global_gtid_binlog_state.reset_nolock();
+        truncate_reset_done= false;
+        id_binlog= 0;
+      }
+      round++;
+    }
+    else
+    {
+      /*
+        NOTE: reading other binlog's FD is necessary for finding out
+        the checksum status of the respective binlog file.
+        Round remains in this branch.
+      */
+      if (find_next_log(linfo, 1))
+      {
+        sql_print_error("Error reading binlog files during recovery. "
+                        "Aborting.");
+        goto err2;
+      }
+      if (!strcmp(linfo->log_file_name, last_log_name))
+      {
+        /* regular server's loop exit at the end of round 2 */
+        if (!do_truncate)
+          break;
+        else
+          id_binlog= UINT_MAX;
+      }
+      else if (do_truncate)
+        id_binlog++;
+
+      DBUG_ASSERT(id_binlog <= UINT_MAX); // the assert is "practical"
+    }
+#else
+      if (!strcmp(linfo->log_file_name, last_log_name))
+        break;                                    // No more files to do
+#endif
+
     if ((file= open_binlog(&log, linfo->log_file_name, &errmsg)) < 0)
     {
       sql_print_error("%s", errmsg);
       goto err2;
     }
-    /*
-      We do not need to read the Format_description_log_event of other binlog
-      files. It is not possible for a binlog checkpoint to span multiple
-      binlog files written by different versions of the server. So we can use
-      the first one read for reading from all binlog files.
-    */
-    if (find_next_log(linfo, 1))
-    {
-      sql_print_error("Error reading binlog files during recovery. Aborting.");
-      goto err2;
-    }
     fdle->reset_crypto();
-  }
+  } // end of for
 
   if (do_xa)
   {
-    if (ha_recover(&xids))
-      goto err2;
+#ifndef HAVE_REPLICATION
+    if (binlog_checkpoint_found)
+      ha_recover_binlog_truncate_complete(&xids);
+#else
+    bool is_safe= !do_truncate ? true :
+      (binlog_truncate_pos == 0 || binlog_unsafe_pos == 0) ? true :
+      (id_binlog_unsafe < id_binlog_truncate ||
+       (id_binlog_unsafe == id_binlog_truncate &&
+        binlog_unsafe_pos < binlog_truncate_pos)) ? true : false;
 
+    if (binlog_checkpoint_found && is_safe)
+      ha_recover_binlog_truncate_complete(&xids);
+
+    if (do_truncate && binlog_truncate_pos)
+    {
+      if (is_safe)
+      {
+        if (truncate_and_remove_binlogs(binlog_truncate_file_name,
+                                        binlog_truncate_pos,
+                                        &truncate_gtid,
+                                        cs_alg))
+        {
+          sql_print_error("Failed to trim the binary log to "
+                          "file:%s pos:%llu.", binlog_truncate_file_name,
+                          binlog_truncate_pos);
+          goto err2;
+        }
+      }
+      else
+      {
+        sql_print_error("Cannot trim the binary log to file:%s "
+                        "pos:%llu as unsafe statement "
+                        "is found at file:%s pos:%llu which is "
+                        "beyond the truncation position; "
+                        "transactions in doubt are left intact. ",
+                        binlog_truncate_file_name, binlog_truncate_pos,
+                        binlog_unsafe_file_name, binlog_unsafe_pos);
+        goto err2;
+      }
+    }
+#endif
     free_root(&mem_root, MYF(0));
     my_hash_free(&xids);
   }
+  if (fdle != fdle_arg)
+    delete fdle;
+
   return 0;
 
 err2:
@@ -10267,6 +10784,9 @@ err1:
                   "(if it's, for example, out of memory error) and restart, "
                   "or delete (or rename) binary log and start mysqld with "
                   "--tc-heuristic-recover={commit|rollback}");
+  if (fdle != fdle_arg)
+    delete fdle;
+
   return 1;
 }
 
