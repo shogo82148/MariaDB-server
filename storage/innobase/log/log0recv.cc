@@ -280,7 +280,28 @@ public:
 
       switch (b & 0x70) {
       case OPTION:
-        goto next;
+        if (UNIV_UNLIKELY(!rlen))
+          goto record_corrupted;
+        if (*l != CHECKSUM)
+          goto next;
+        if (UNIV_UNLIKELY(rlen != 1 + 4 + 8))
+          goto record_corrupted;
+        uint32_t checksum;
+        uint32_t calculated_checksum;
+        applied= APPLIED_YES;
+        ++l;
+        checksum= mach_read_from_4(l);
+        l+= 4;
+        //          lsn_t flushed_lsn = mach_read_from_8(l);
+        l+= 8;
+        ut_ad(!block.page.zip.ssize);
+        calculated_checksum= mtr_t::page_checksum(frame);
+        if (UNIV_UNLIKELY(checksum != calculated_checksum))
+          ib::warn() << "Page checksum stored in redo log record " << checksum
+                     << " does not match counted checksum "
+                     << calculated_checksum << " for page " << block.page.id()
+                     << ".";
+        continue;
       case EXTENDED:
         if (UNIV_UNLIKELY(block.page.id().page_no() < 3 ||
                           block.page.zip.ssize))
@@ -1970,8 +1991,16 @@ same_page:
         }
         last_offset= FIL_PAGE_TYPE;
         break;
-      case RESERVED:
       case OPTION:
+        if (UNIV_UNLIKELY(!rlen))
+          goto record_corrupted;
+        if (*l == CHECKSUM) {
+          if (UNIV_UNLIKELY(rlen != 1 + 4 + 8))
+            goto record_corrupted;
+          break;
+        }
+        /* fall through */
+      case RESERVED:
         continue;
       case WRITE:
       case MEMMOVE:

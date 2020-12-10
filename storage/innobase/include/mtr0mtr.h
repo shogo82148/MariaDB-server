@@ -322,6 +322,16 @@ public:
   /** @return true if pages has been trimed */
   bool is_trim_pages() { return m_trim_pages; }
 
+  /** Checks if page was freed within minitransaction.
+  @param id    id of the page to check
+  @return true if page was freed, false otherwise */
+  inline bool page_is_freed(page_id_t id) const;
+
+  /** Counts page checksum for OPTION CHECKSUM redo log record.
+  @param page       the pointer to a page
+  @return checksum of the page */
+  static uint32_t page_checksum(byte *page);
+
 #ifdef UNIV_DEBUG
   /** Check if we are holding an rw-latch in this mini-transaction
   @param lock   latch to search for
@@ -332,7 +342,7 @@ public:
   /** Check if we are holding exclusive tablespace latch
   @param space  tablespace to search for
   @return whether space.latch is being held */
-  bool memo_contains(const fil_space_t& space)
+  bool memo_contains(const fil_space_t& space) const
     MY_ATTRIBUTE((warn_unused_result));
 
 
@@ -558,6 +568,13 @@ public:
   /** Trim the end of a tablespace.
   @param id       first page identifier that will not be in the file */
   inline void trim_pages(const page_id_t id);
+
+  /** Write checksum record for the certain page.
+  @param id          id of the page for which crc is counted
+  @param flushed_lsn the LSN of previous mtr_t::commit() (FIL_PAGE_LSN)
+  @param crc         crc of the page */
+  inline void page_checksum(const page_id_t id, uint32_t crc,
+                            lsn_t flushed_lsn);
 
   /** Write a log record about a file operation.
   @param type           file operation
