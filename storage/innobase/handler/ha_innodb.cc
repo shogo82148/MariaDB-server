@@ -4365,7 +4365,7 @@ struct pending_checkpoint {
 	void *cookie;
 	ib_uint64_t lsn;
 };
-static struct pending_checkpoint *pending_checkpoint_list;
+static std::atomic<pending_checkpoint*> pending_checkpoint_list;
 static struct pending_checkpoint *pending_checkpoint_list_end;
 
 /*****************************************************************//**
@@ -4413,10 +4413,12 @@ innobase_checkpoint_request(
 			any order, and short delays in notifications do not
 			significantly impact performance. */
 		} else {
-			pending_checkpoint_list = entry;
+			pending_checkpoint_list.store(entry, std::memory_order_release);
 		}
 		pending_checkpoint_list_end = entry;
-		entry = NULL;
+                entry = NULL;
+                if (log_get_lsn() == (flush_lsn = log_get_flush_lsn()))
+			innobase_mysql_log_notify(flush_lsn, true);
 	}
 	mysql_mutex_unlock(&pending_checkpoint_mutex);
 
@@ -4435,7 +4437,9 @@ UNIV_INTERN
 void
 innobase_mysql_log_notify(
 /*======================*/
-	ib_uint64_t	flush_lsn)	/*!< in: LSN flushed to disk */
+	ib_uint64_t	flush_lsn,	/*!< in: LSN flushed to disk */
+	bool		skip_lock)	/*!< in: TRUE - don't lock critical
+					section, must be done by the caller */
 {
 	struct pending_checkpoint *	pending;
 	struct pending_checkpoint *	entry;
@@ -4444,7 +4448,7 @@ innobase_mysql_log_notify(
 	/* It is safe to do a quick check for NULL first without lock.
 	Even if we should race, we will at most skip one checkpoint and
 	take the next one, which is harmless. */
-	if (!pending_checkpoint_list)
+	if (!pending_checkpoint_list.load(std::memory_order_acquire))
 		return;
 
 	mysql_mutex_lock(&pending_checkpoint_mutex);
