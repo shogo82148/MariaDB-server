@@ -4,7 +4,7 @@ Copyright (c) 2000, 2020, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2008, 2009 Google Inc.
 Copyright (c) 2009, Percona Inc.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2013, 2020, MariaDB Corporation.
+Copyright (c) 2013, 2021, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -2670,17 +2670,18 @@ static bool innobase_query_caching_table_check_low(
 	For read-only transaction: should satisfy (1) and (3)
 	For read-write transaction: should satisfy (1), (2), (3) */
 
-	if (lock_table_get_n_locks(table)) {
-		return false;
-	}
-
 	if (trx->id && trx->id < table->query_cache_inv_trx_id) {
 		return false;
 	}
 
-	return !trx->read_view.is_open()
-		|| trx->read_view.low_limit_id()
-		>= table->query_cache_inv_trx_id;
+	if (trx->read_view.is_open()
+	    && trx->read_view.low_limit_id()
+	    < table->query_cache_inv_trx_id) {
+		return false;
+	}
+
+	LockMutexGuard g;
+	return UT_LIST_GET_LEN(table->locks) == 0;
 }
 
 /** Checks if MySQL at the moment is allowed for this table to retrieve a
@@ -4449,7 +4450,7 @@ static void innobase_kill_query(handlerton*, THD *thd, enum thd_kill_levels)
       Also, BF thread should own trx mutex for the victim. */
       DBUG_VOID_RETURN;
 #endif /* WITH_WSREP */
-    lock_sys.mutex_lock();
+    LockMutexGuard g;
     trx_sys.trx_list.freeze();
     trx->mutex.wr_lock();
     /* It is possible that innobase_close_connection() is concurrently
@@ -4470,7 +4471,6 @@ static void innobase_kill_query(handlerton*, THD *thd, enum thd_kill_levels)
     if (!cancel);
     else if (lock_t *lock= trx->lock.wait_lock)
       lock_cancel_waiting_and_release(lock);
-    lock_sys.mutex_unlock();
     trx->mutex.wr_unlock();
   }
 
@@ -18091,11 +18091,10 @@ wsrep_abort_transaction(
 			wsrep_thd_transaction_state_str(victim_thd));
 
 	if (victim_trx) {
-		lock_sys.mutex_lock();
+		LockMutexGuard g;
 		victim_trx->mutex.wr_lock();
 		int rcode= wsrep_innobase_kill_one_trx(bf_thd,
 						       victim_trx, signal);
-		lock_sys.mutex_unlock();
 		victim_trx->mutex.wr_unlock();
 		DBUG_RETURN(rcode);
 	} else {

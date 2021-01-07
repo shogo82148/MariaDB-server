@@ -2034,13 +2034,11 @@ withdraw_retry:
 			message_interval *= 2;
 		}
 
-		lock_sys.mutex_lock();
-		bool	found = false;
-		trx_sys.trx_list.for_each(find_interesting_trx{
-			found, withdraw_started, current_time});
-		lock_sys.mutex_unlock();
-
+		bool found= false;
+		find_interesting_trx f{found, withdraw_started, current_time};
 		withdraw_started = current_time;
+		LockMutexGuard g;
+		trx_sys.trx_list.for_each(f);
 	}
 
 	if (should_retry_withdraw) {

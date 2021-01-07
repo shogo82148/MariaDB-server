@@ -3,7 +3,7 @@
 Copyright (c) 1994, 2019, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2008, Google Inc.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2015, 2020, MariaDB Corporation.
+Copyright (c) 2015, 2021, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -1997,11 +1997,12 @@ retry_page_get:
 		trx_t*		trx = thr_get_trx(cursor->thr);
 		lock_prdt_t	prdt;
 
-		lock_sys.mutex_lock();
-		lock_init_prdt_from_mbr(
-			&prdt, &cursor->rtr_info->mbr, mode,
-			trx->lock.lock_heap);
-		lock_sys.mutex_unlock();
+		{
+			LockMutexGuard g;
+			lock_init_prdt_from_mbr(
+				&prdt, &cursor->rtr_info->mbr, mode,
+				trx->lock.lock_heap);
+		}
 
 		if (rw_latch == RW_NO_LATCH && height != 0) {
 			block->lock.s_lock();

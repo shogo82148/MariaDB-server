@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2000, 2018, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2015, 2020, MariaDB Corporation.
+Copyright (c) 2015, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -2663,9 +2663,10 @@ skip:
 	}
 
 	if (!srv_fast_shutdown && !trx_sys.any_active_transactions()) {
-		lock_sys.mutex_lock();
-		skip = UT_LIST_GET_LEN(table->locks) != 0;
-		lock_sys.mutex_unlock();
+		{
+			LockMutexGuard g;
+			skip = UT_LIST_GET_LEN(table->locks) != 0;
+		}
 		if (skip) {
 			/* We cannot drop tables that are locked by XA
 			PREPARE transactions. */
