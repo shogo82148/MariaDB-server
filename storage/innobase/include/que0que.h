@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2017, 2020, MariaDB Corporation.
+Copyright (c) 2017, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -98,7 +98,7 @@ que_graph_free(
 			afterwards! */
 /**********************************************************************//**
 Stops a query thread if graph or trx is in a state requiring it. The
-conditions are tested in the order (1) graph, (2) trx. The lock_sys_t::mutex
+conditions are tested in the order (1) graph, (2) trx. The lock_sys.latch
 has to be reserved.
 @return TRUE if stopped */
 ibool

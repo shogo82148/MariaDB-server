@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2007, 2014, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2020, MariaDB Corporation.
+Copyright (c) 2020, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -49,7 +49,7 @@ lock_queue_iterator_reset(
 	ulint			bit_no)	/*!< in: record number in the
 					heap */
 {
-	lock_sys.mutex_assert_locked();
+	lock_sys.assert_locked();
 
 	iter->current_lock = lock;
 
@@ -84,7 +84,7 @@ lock_queue_iterator_get_prev(
 {
 	const lock_t*	prev_lock;
 
-	lock_sys.mutex_assert_locked();
+	lock_sys.assert_locked();
 
 	switch (lock_get_type_low(iter->current_lock)) {
 	case LOCK_REC:

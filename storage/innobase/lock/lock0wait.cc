@@ -42,7 +42,7 @@ Created 25/5/2010 Sunny Bains
 check if lock timeout was for priority thread,
 as a side effect trigger lock monitor
 @param[in]    trx    transaction owning the lock
-@param[in]    locked true if trx and lock_sys.mutex is ownd
+@param[in]    locked true if trx and lock_sys.latch is held
 @return	false for regular lock timeout */
 static
 bool
@@ -55,15 +55,11 @@ wsrep_is_BF_lock_timeout(
 		ib::info() << "WSREP: BF lock wait long for trx:" << ib::hex(trx->id)
 			   << " query: " << wsrep_thd_query(trx->mysql_thd);
 		if (!locked) {
-			lock_sys.mutex_lock();
-		}
-
-		lock_sys.mutex_assert_locked();
-
-		trx_print_latched(stderr, trx, 3000);
-
-		if (!locked) {
-			lock_sys.mutex_unlock();
+			LockMutexGuard{SRW_LOCK_CALL};
+			trx_print_latched(stderr, trx, 3000);
+		} else {
+			lock_sys.assert_locked();
+			trx_print_latched(stderr, trx, 3000);
 		}
 
 		srv_print_innodb_monitor 	= TRUE;
@@ -211,7 +207,7 @@ dberr_t lock_wait(que_thr_t *thr)
   if (trx->lock.wait_lock)
   {
     {
-      LockMutexGuard g;
+      LockMutexGuard g{SRW_LOCK_CALL};
       mysql_mutex_lock(&lock_sys.wait_mutex);
       if (lock_t *lock= trx->lock.wait_lock)
       {
@@ -235,7 +231,7 @@ lock_wait_release_thread_if_suspended(
 	que_thr_t*	thr)	/*!< in: query thread associated with the
 				user OS thread	 */
 {
-  lock_sys.mutex_assert_locked();
+  lock_sys.assert_locked();
   mysql_mutex_assert_owner(&lock_sys.wait_mutex);
   trx_t *trx= thr_get_trx(thr);
   if (trx->lock.was_chosen_as_deadlock_victim)

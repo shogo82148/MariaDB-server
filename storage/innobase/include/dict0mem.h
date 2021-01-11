@@ -2,7 +2,7 @@
 
 Copyright (c) 1996, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2013, 2020, MariaDB Corporation.
+Copyright (c) 2013, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -2248,7 +2248,7 @@ public:
 	kept in trx_t. In order to quickly determine whether a transaction has
 	locked the AUTOINC lock we keep a pointer to the transaction here in
 	the 'autoinc_trx' member. This is to avoid acquiring the
-	lock_sys_t::mutex and scanning the vector in trx_t.
+	lock_sys.latch and scanning the vector in trx_t.
 	When an AUTOINC lock has to wait, the corresponding lock instance is
 	created on the trx lock heap rather than use the pre-allocated instance
 	in autoinc_lock below. */
@@ -2268,14 +2268,14 @@ public:
 
 	/** This counter is used to track the number of granted and pending
 	autoinc locks on this table. This value is set after acquiring the
-	lock_sys_t::mutex but we peek the contents to determine whether other
+	lock_sys.latch but we peek the contents to determine whether other
 	transactions have acquired the AUTOINC lock or not. Of course only one
 	transaction can be granted the lock but there can be multiple
 	waiters. */
 	ulong					n_waiting_or_granted_auto_inc_locks;
 
 	/** The transaction that currently holds the the AUTOINC lock on this
-	table. Protected by lock_sys.mutex. */
+	table. Protected by lock_sys.latch. */
 	const trx_t*				autoinc_trx;
 
 	/* @} */
@@ -2290,8 +2290,8 @@ public:
 
 	/** Count of the number of record locks on this table. We use this to
 	determine whether we can evict the table from the dictionary cache.
-	It is protected by lock_sys.mutex. */
-	ulint					n_rec_locks;
+	Protected by LockGuard. */
+	Atomic_counter<ulint> n_rec_locks;
 
 private:
 	/** Count of how many handles are opened to this table. Dropping of the
@@ -2300,7 +2300,7 @@ private:
 	Atomic_counter<uint32_t>		n_ref_count;
 
 public:
-	/** List of locks on the table. Protected by lock_sys.mutex. */
+	/** List of locks on the table. Protected by lock_sys.latch. */
 	table_lock_list_t			locks;
 
 	/** Timestamp of the last modification of this table. */
