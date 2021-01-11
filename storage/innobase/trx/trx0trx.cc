@@ -192,6 +192,7 @@ struct TrxFactory {
 
 		trx->lock.lock_heap = mem_heap_create_typed(
 			1024, MEM_HEAP_FOR_LOCK_HEAP);
+		mysql_cond_init(0, &trx->lock.cond, nullptr);
 
 		lock_trx_lock_list_init(&trx->lock.trx_locks);
 
@@ -232,6 +233,8 @@ struct TrxFactory {
 			mem_heap_free(trx->lock.lock_heap);
 			trx->lock.lock_heap = NULL;
 		}
+
+		mysql_cond_destroy(&trx->lock.cond);
 
 		ut_a(UT_LIST_GET_LEN(trx->lock.trx_locks) == 0);
 		ut_ad(UT_LIST_GET_LEN(trx->lock.evicted_tables) == 0);

@@ -183,6 +183,7 @@ que_thr_end_lock_wait(
 	que_thr_t*	thr;
 
 	lock_sys.mutex_assert_locked();
+	mysql_mutex_assert_owner(&lock_sys.wait_mutex);
 
 	thr = trx->lock.wait_thr;
 
@@ -1043,20 +1044,15 @@ loop:
 		goto loop;
 
 	case QUE_THR_LOCK_WAIT:
-		lock_wait_suspend_thread(thr);
 		trx_t* trx = thr->graph->trx;
-
-		trx->mutex.wr_lock();
 		ut_ad(trx->id);
-		const dberr_t err = trx->error_state;
-		if (err != DB_SUCCESS) {
+		if (lock_wait(thr) != DB_SUCCESS) {
 			/* thr was chosen as a deadlock victim or there was
 			a lock wait timeout */
+			trx->mutex.wr_lock();
 			que_thr_dec_refer_count(thr, NULL);
-		}
-		trx->mutex.wr_unlock();
-
-		if (err == DB_SUCCESS) {
+			trx->mutex.wr_unlock();
+		} else {
 			goto loop;
 		}
 	}

@@ -475,16 +475,14 @@ struct trx_lock_t {
 					== TRX_STATE_ACTIVE: TRX_QUE_RUNNING,
 					TRX_QUE_LOCK_WAIT, ... */
 
-	lock_t*		wait_lock;	/*!< if trx execution state is
-					TRX_QUE_LOCK_WAIT, this points to
-					the lock request, otherwise this is
-					NULL; set to non-NULL when holding
-					both trx->mutex and lock_sys.mutex;
-					set to NULL when holding
-					lock_sys.mutex; readers should
-					hold lock_sys.mutex, except when
-					they are holding trx->mutex and
-					wait_lock==NULL */
+  /** Lock request being waited for, in que_state==TRX_QUE_LOCK_WAIT.
+  Set to nonnull when holding both lock_sys.mutex and trx->mutex,
+  by the thread that is executing the transaction. Set to nullptr
+  when holding lock_sys.wait_mutex. */
+  Atomic_relaxed<lock_t*> wait_lock;
+  /** condition variable for !wait_lock; used with lock_sys.wait_mutex */
+  mysql_cond_t cond;
+
 	ib_uint64_t	deadlock_mark;	/*!< A mark field that is initialized
 					to and checked against lock_mark_counter
 					by lock_deadlock_recursive(). */
@@ -495,8 +493,8 @@ struct trx_lock_t {
 					transaction as a victim in deadlock
 					resolution, it sets this to true.
 					Protected by trx->mutex. */
-	time_t		wait_started;	/*!< lock wait started at this time,
-					protected only by lock_sys.mutex */
+	my_hrtime_t	suspend_time;	/*!< lock wait start time, protected
+					only by lock_sys.wait_mutex */
 
 	que_thr_t*	wait_thr;	/*!< query thread belonging to this
 					trx that is in QUE_THR_LOCK_WAIT

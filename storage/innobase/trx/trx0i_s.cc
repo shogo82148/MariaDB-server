@@ -434,7 +434,8 @@ fill_trx_row(
 	if (trx->lock.wait_lock != NULL) {
 
 		ut_a(requested_lock_row != NULL);
-		row->trx_wait_started = trx->lock.wait_started;
+		row->trx_wait_started = hrtime_to_time(
+			trx->lock.suspend_time);
 	} else {
 		ut_a(requested_lock_row == NULL);
 		row->trx_wait_started = 0;
