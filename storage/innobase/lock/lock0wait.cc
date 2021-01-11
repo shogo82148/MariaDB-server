@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2014, 2020, MariaDB Corporation.
+Copyright (c) 2014, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -92,13 +92,12 @@ lock_wait_table_release_slot(
 	trx_t::mutex. To reduce contention on the lock mutex when reserving the
 	slot we avoid acquiring the lock mutex. */
 
-	lock_sys.mutex_lock();
-
-	slot->thr->slot = NULL;
-	slot->thr = NULL;
-	slot->in_use = FALSE;
-
-	lock_sys.mutex_unlock();
+	{
+		LockMutexGuard g;
+		slot->thr->slot = NULL;
+		slot->thr = NULL;
+		slot->in_use = FALSE;
+	}
 
 	/* Scan backwards and adjust the last free slot pointer. */
 	for (slot = lock_sys.last_slot;
@@ -284,12 +283,11 @@ lock_wait_suspend_thread(
 	current thread which owns the transaction. Only acquire the
 	mutex if the wait_lock is still active. */
 	if (const lock_t* wait_lock = trx->lock.wait_lock) {
-		lock_sys.mutex_lock();
+		LockMutexGuard g;
 		wait_lock = trx->lock.wait_lock;
 		if (wait_lock) {
 			lock_type = lock_get_type_low(wait_lock);
 		}
-		lock_sys.mutex_unlock();
 	}
 
 	ulint	had_dict_lock = trx->dict_operation_lock_mode;
@@ -449,7 +447,7 @@ lock_wait_check_and_cancel(
 		possible that the lock has already been
 		granted: in that case do nothing */
 
-		lock_sys.mutex_lock();
+		LockMutexGuard g;
 
 		if (trx->lock.wait_lock != NULL) {
 			ut_a(trx->lock.que_state == TRX_QUE_LOCK_WAIT);
@@ -464,8 +462,6 @@ lock_wait_check_and_cancel(
                         }
 #endif /* WITH_WSREP */
 		}
-
-		lock_sys.mutex_unlock();
 	}
 }
 

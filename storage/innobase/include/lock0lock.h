@@ -635,13 +635,6 @@ dberr_t
 lock_trx_handle_wait(
 /*=================*/
 	trx_t*	trx);	/*!< in/out: trx lock state */
-/*********************************************************************//**
-Get the number of locks on a table.
-@return number of locks */
-ulint
-lock_table_get_n_locks(
-/*===================*/
-	const dict_table_t*	table);	/*!< in: table */
 /*******************************************************************//**
 Initialise the trx lock list. */
 void
@@ -750,6 +743,8 @@ public:
   void mutex_assert_locked() const { mysql_mutex_assert_owner(&mutex); }
   /** Assert that mutex_lock() has not been invoked */
   void mutex_assert_unlocked() const { mysql_mutex_assert_not_owner(&mutex); }
+  /** Assert that a page shared is exclusively latched */
+  void assert_locked(const page_id_t) { mutex_assert_locked(); }
 
   /** Wait for a lock to be granted */
   void wait_lock(lock_t **lock, mysql_cond_t *cond)
@@ -813,6 +808,23 @@ public:
   @retval nullptr if none exists */
   lock_t *get_first_prdt_page(const page_id_t id) const
   { return get_first(prdt_page_hash, id); }
+};
+
+/** The lock system */
+extern lock_sys_t lock_sys;
+
+/** lock_sys.mutex guard */
+struct LockMutexGuard
+{
+  LockMutexGuard() { lock_sys.mutex_lock(); }
+  ~LockMutexGuard() { lock_sys.mutex_unlock(); }
+};
+
+/** lock_sys.mutex guard for a page_id_t shard */
+struct LockGuard
+{
+  LockGuard(const page_id_t) { lock_sys.mutex_lock(); }
+  ~LockGuard() { lock_sys.mutex_unlock(); }
 };
 
 /*********************************************************************//**
@@ -922,9 +934,6 @@ void
 lock_rec_free_all_from_discard_page(
 /*================================*/
 	const buf_block_t*	block);		/*!< in: page to be discarded */
-
-/** The lock system */
-extern lock_sys_t lock_sys;
 
 #ifdef WITH_WSREP
 /*********************************************************************//**

@@ -1,7 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 1997, 2016, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, 2020, MariaDB Corporation.
+Copyright (c) 2016, 2021, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -3280,10 +3280,8 @@ commit_exit:
 		ibuf_mtr_commit(&bitmap_mtr);
 		goto fail_exit;
 	} else {
-		lock_sys.mutex_lock();
-		const auto lock_exists = lock_sys.get_first(page_id);
-		lock_sys.mutex_unlock();
-		if (lock_exists) {
+		LockGuard g{page_id};
+		if (lock_sys.get_first(page_id)) {
 			goto commit_exit;
 		}
 	}
