@@ -156,7 +156,7 @@ struct trx_i_s_cache_t {
 	ha_storage_t*	storage;	/*!< storage for external volatile
 					data that may become unavailable
 					when we release
-					lock_sys.mutex */
+					lock_sys.latch */
 	ulint		mem_allocd;	/*!< the amount of memory
 					allocated with mem_alloc*() */
 	bool		is_truncated;	/*!< this is true if the memory
@@ -422,7 +422,7 @@ fill_trx_row(
 {
 	const char*	s;
 
-	lock_sys.mutex_assert_locked();
+	lock_sys.assert_locked();
 
 	row->trx_id = trx_get_id_for_print(trx);
 	row->trx_started = trx->start_time;
@@ -480,9 +480,8 @@ thd_done:
 
 	row->trx_tables_locked = lock_number_of_tables_locked(&trx->lock);
 
-	/* These are protected by both trx->mutex or lock_sys.mutex,
-	or just lock_sys.mutex. For reading, it suffices to hold
-	lock_sys.mutex. */
+	/* These are protected by lock_sys.latch (which we are holding)
+	and sometimes also trx->mutex. */
 
 	row->trx_lock_structs = UT_LIST_GET_LEN(trx->lock.trx_locks);
 
@@ -1046,7 +1045,7 @@ add_trx_relevant_locks_to_cache(
 					requested lock row, or NULL or
 					undefined */
 {
-	lock_sys.mutex_assert_locked();
+	lock_sys.assert_locked();
 
 	/* If transaction is waiting we add the wait lock and all locks
 	from another transactions that are blocking the wait lock. */
@@ -1194,7 +1193,7 @@ static void fetch_data_into_cache_low(trx_i_s_cache_t *cache, const trx_t *trx)
 
 static void fetch_data_into_cache(trx_i_s_cache_t *cache)
 {
-  LockMutexGuard g;
+  LockMutexGuard g{SRW_LOCK_CALL};
   trx_i_s_cache_clear(cache);
 
   /* Capture the state of transactions */

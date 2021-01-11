@@ -2657,7 +2657,7 @@ skip:
 
 	if (!srv_fast_shutdown && !trx_sys.any_active_transactions()) {
 		{
-			LockMutexGuard g;
+			LockMutexGuard g{SRW_LOCK_CALL};
 			skip = UT_LIST_GET_LEN(table->locks) != 0;
 		}
 		if (skip) {

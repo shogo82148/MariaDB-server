@@ -2039,7 +2039,7 @@ withdraw_retry:
 		find_interesting_trx f
 			{found, withdraw_started, my_hrtime_coarse()};
 		withdraw_started = current_time;
-		LockMutexGuard g;
+		LockMutexGuard g{SRW_LOCK_CALL};
 		trx_sys.trx_list.for_each(f);
 	}
 

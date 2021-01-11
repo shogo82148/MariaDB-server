@@ -98,7 +98,7 @@ que_graph_free(
 			afterwards! */
 /**********************************************************************//**
 Stops a query thread if graph or trx is in a state requiring it. The
-conditions are tested in the order (1) graph, (2) trx. The lock_sys_t::mutex
+conditions are tested in the order (1) graph, (2) trx. The lock_sys.latch
 has to be reserved.
 @return TRUE if stopped */
 ibool

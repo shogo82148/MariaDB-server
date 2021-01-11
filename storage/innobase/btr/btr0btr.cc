@@ -3295,7 +3295,7 @@ btr_lift_page_up(
 	if (!dict_table_is_locking_disabled(index->table)) {
 		/* Free predicate page locks on the block */
 		if (dict_index_is_spatial(index)) {
-			LockMutexGuard g;
+			LockGuard g{block->page.id()};
 			lock_prdt_page_free_from_discard(
 				block, &lock_sys.prdt_page_hash);
 		}
@@ -3547,7 +3547,7 @@ retry:
 			}
 
 			/* No GAP lock needs to be worrying about */
-			LockMutexGuard g;
+			LockGuard g{block->page.id()};
 			lock_prdt_page_free_from_discard(
 				block, &lock_sys.prdt_page_hash);
 			lock_rec_free_all_from_discard_page(block);
@@ -3699,7 +3699,7 @@ retry:
 							 offsets2, offsets,
 							 merge_page, mtr);
 			}
-			LockMutexGuard g;
+			LockGuard g{block->page.id()};
 			lock_prdt_page_free_from_discard(
 				block, &lock_sys.prdt_page_hash);
 			lock_rec_free_all_from_discard_page(block);
