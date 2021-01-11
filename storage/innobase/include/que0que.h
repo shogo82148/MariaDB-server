@@ -327,9 +327,6 @@ struct que_thr_t{
 					thus far */
 	ulint		lock_state;	/*!< lock state of thread (table or
 					row) */
-	struct srv_slot_t*
-			slot;		/* The thread slot in the wait
-					array in srv_sys_t */
 	/*------------------------------*/
 	/* The following fields are links for the various lists that
 	this type can be on. */

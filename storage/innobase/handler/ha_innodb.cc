@@ -4452,6 +4452,7 @@ static void innobase_kill_query(handlerton*, THD *thd, enum thd_kill_levels)
 #endif /* WITH_WSREP */
     LockMutexGuard g;
     trx_sys.trx_list.freeze();
+    mysql_mutex_lock(&lock_sys.wait_mutex);
     trx->mutex.wr_lock();
     /* It is possible that innobase_close_connection() is concurrently
     being executed on our victim. Even if the trx object is later
@@ -4472,6 +4473,7 @@ static void innobase_kill_query(handlerton*, THD *thd, enum thd_kill_levels)
     else if (lock_t *lock= trx->lock.wait_lock)
       lock_cancel_waiting_and_release(lock);
     trx->mutex.wr_unlock();
+    mysql_mutex_unlock(&lock_sys.wait_mutex);
   }
 
   DBUG_VOID_RETURN;
@@ -18045,10 +18047,10 @@ int wsrep_innobase_kill_one_trx(THD *bf_thd, trx_t *victim_trx, bool signal)
 	wsrep_thd_UNLOCK(thd);
 	DEBUG_SYNC(bf_thd, "before_wsrep_thd_abort");
 
-	if (wsrep_thd_bf_abort(bf_thd, thd, signal))
-	{
-		lock_t*  wait_lock = victim_trx->lock.wait_lock;
-		if (wait_lock) {
+	if (!wsrep_thd_bf_abort(bf_thd, thd, signal)) {
+	} else if (victim_trx->lock.wait_lock) {
+		mysql_mutex_lock(&lock_sys.wait_mutex);
+		if (lock_t* wait_lock = victim_trx->lock.wait_lock) {
 			DBUG_ASSERT(victim_trx->is_wsrep());
 			WSREP_DEBUG("victim has wait flag: %lu",
 				    thd_get_thread_id(thd));
@@ -18057,6 +18059,7 @@ int wsrep_innobase_kill_one_trx(THD *bf_thd, trx_t *victim_trx, bool signal)
 			victim_trx->lock.was_chosen_as_deadlock_victim= TRUE;
 			lock_cancel_waiting_and_release(wait_lock);
 		}
+		mysql_mutex_unlock(&lock_sys.wait_mutex);
 	}
 
 	DBUG_RETURN(0);

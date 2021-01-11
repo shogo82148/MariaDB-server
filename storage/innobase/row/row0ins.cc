@@ -1829,19 +1829,18 @@ do_possible_lock_wait:
 
 		check_table->inc_fk_checks();
 
-		lock_wait_suspend_thread(thr);
+		err = lock_wait(thr);
 
 		thr->lock_state = QUE_THR_LOCK_NOLOCK;
 
-		err = trx->error_state;
+		check_table->dec_fk_checks();
+
 		if (err != DB_SUCCESS) {
 		} else if (check_table->to_be_dropped) {
 			err = DB_LOCK_WAIT_TIMEOUT;
 		} else {
 			err = DB_LOCK_WAIT;
 		}
-
-		check_table->dec_fk_checks();
 	}
 
 exit_func:

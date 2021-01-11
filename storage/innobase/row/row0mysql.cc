@@ -733,11 +733,8 @@ handle_new_error:
 		/* MySQL will roll back the latest SQL statement */
 		break;
 	case DB_LOCK_WAIT:
-		lock_wait_suspend_thread(thr);
-
-		if (trx->error_state != DB_SUCCESS) {
+		if (lock_wait(thr) != DB_SUCCESS) {
 			que_thr_stop_for_mysql(thr);
-
 			goto handle_new_error;
 		}
 
@@ -2182,9 +2179,7 @@ static dberr_t row_update_vers_insert(que_thr_t* thr, upd_node_t* node)
 		switch (trx->error_state) {
 		case DB_LOCK_WAIT:
 			que_thr_stop_for_mysql(thr);
-			lock_wait_suspend_thread(thr);
-
-			if (trx->error_state == DB_SUCCESS) {
+			if (lock_wait(thr) == DB_SUCCESS) {
 				continue;
 			}
 
@@ -2256,9 +2251,7 @@ row_update_cascade_for_mysql(
 		switch (trx->error_state) {
 		case DB_LOCK_WAIT:
 			que_thr_stop_for_mysql(thr);
-			lock_wait_suspend_thread(thr);
-
-			if (trx->error_state == DB_SUCCESS) {
+			if (lock_wait(thr) == DB_SUCCESS) {
 				continue;
 			}
 

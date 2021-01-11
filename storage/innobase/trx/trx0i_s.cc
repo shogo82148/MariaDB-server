@@ -434,7 +434,11 @@ fill_trx_row(
 	if (trx->lock.wait_lock != NULL) {
 
 		ut_a(requested_lock_row != NULL);
-		row->trx_wait_started = trx->lock.wait_started;
+		/* FIXME: are my_hrtime_coarse() and my_interval_timer()
+		comparable at all? */
+		row->trx_wait_started = trx->start_time + static_cast<time_t>(
+			(trx->lock.suspend_time.val
+			 - trx->start_time_micro * 1000) / 10000000);
 	} else {
 		ut_a(requested_lock_row == NULL);
 		row->trx_wait_started = 0;
