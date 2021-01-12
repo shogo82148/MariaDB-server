@@ -1252,8 +1252,8 @@ trx_i_s_cache_init(
 {
 	/* The latching is done in the following order:
 	acquire trx_i_s_cache_t::rw_lock, rwlock
-	acquire lock mutex
-	release lock mutex
+	acquire exclusive lock_sys.latch
+	release exclusive lock_sys.latch
 	release trx_i_s_cache_t::rw_lock
 	acquire trx_i_s_cache_t::rw_lock, rdlock
 	release trx_i_s_cache_t::rw_lock */
