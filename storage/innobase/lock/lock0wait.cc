@@ -71,6 +71,33 @@ wsrep_is_BF_lock_timeout(
 }
 #endif /* WITH_WSREP */
 
+/** Note that a record lock wait started */
+inline void lock_sys_t::wait_start()
+{
+  mysql_mutex_assert_owner(&wait_mutex);
+  wait_pending++;
+  wait_count++;
+}
+
+/** Note that a record lock wait resumed */
+inline
+void lock_sys_t::wait_resume(THD *thd, my_hrtime_t start, my_hrtime_t now)
+{
+  mysql_mutex_assert_owner(&wait_mutex);
+  wait_pending--;
+  if (now.val >= start.val)
+  {
+    const ulint diff_time= static_cast<ulint>((now.val - start.val) / 1000);
+    wait_time+= diff_time;
+
+    if (diff_time > wait_time_max)
+      wait_time_max= diff_time;
+
+    thd_storage_lock_wait(thd, diff_time);
+  }
+}
+
+
 /** Wait for a lock to be released.
 @retval DB_DEADLOCK if this transaction was chosen as the deadlock victim
 @retval DB_INTERRUPTED if the execution was interrupted by the user
@@ -119,11 +146,7 @@ dberr_t lock_wait(que_thr_t *thr)
   trx->mutex.wr_unlock();
 
   if (row_lock_wait)
-  {
-    // FIXME: use normal counters protected by lock_sys.wait_mutex
-    srv_stats.n_lock_wait_count.inc();
-    srv_stats.n_lock_wait_current_count++;
-  }
+    lock_sys.wait_start();
 
   int err= 0;
 
@@ -153,6 +176,11 @@ dberr_t lock_wait(que_thr_t *thr)
       switch (trx->error_state) {
       default:
         if (trx_is_interrupted(trx))
+          /* innobase_kill_query() can only set trx->error_state=DB_INTERRUPTED
+          for any transaction that is attached to a connection. The
+          assignment here is needed to avoid an assertion failure
+          on trx->lock.n_active_thrs during the rollback of a transaction
+          in the test rpl.rpl_parallel_optimistic. */
           trx->error_state= DB_INTERRUPTED;
         else if (!err)
           continue;
@@ -171,23 +199,7 @@ dberr_t lock_wait(que_thr_t *thr)
     had_dict_lock= false;
 
   if (row_lock_wait)
-    srv_stats.n_lock_wait_current_count--;
-
-  if (row_lock_wait)
-  {
-    const my_hrtime_t resume_time= my_hrtime_coarse();
-    if (resume_time.val >= suspend_time.val)
-    {
-      const ulint diff_time= static_cast<ulint>
-        ((resume_time.val - suspend_time.val) / 1000);
-      srv_stats.n_lock_wait_time.add(diff_time); // FIXME: use normal variable
-
-      if (diff_time > lock_sys.n_lock_max_wait_time)
-        lock_sys.n_lock_max_wait_time= diff_time;
-
-      thd_storage_lock_wait(trx->mysql_thd, diff_time);
-    }
-  }
+    lock_sys.wait_resume(trx->mysql_thd, suspend_time, my_hrtime_coarse());
 
   mysql_mutex_unlock(&lock_sys.wait_mutex);
 

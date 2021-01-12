@@ -4457,6 +4457,7 @@ static void innobase_kill_query(handlerton*, THD *thd, enum thd_kill_levels)
       if (lock_t *lock= trx->lock.wait_lock)
       {
         trx->mutex.wr_lock();
+        trx->error_state= DB_INTERRUPTED;
         lock_cancel_waiting_and_release(lock);
         trx->mutex.wr_unlock();
       }

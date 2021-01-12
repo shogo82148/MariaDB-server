@@ -697,11 +697,18 @@ public:
   /** page locks for SPATIAL INDEX */
   hash_table_t prdt_page_hash;
 
-  /** mutex protecting waiting_threads, last_slot */
+  /** mutex covering lock waits; @see trx_lock_t::wait_lock */
   MY_ALIGNED(CACHE_LINE_SIZE) mysql_mutex_t wait_mutex;
+private:
+  /** Pending number of lock waits; protected by wait_mutex */
+  ulint wait_pending;
+  /** Cumulative number of lock waits; protected by wait_mutex */
+  ulint wait_count;
+  /** Cumulative wait time; protected by wait_mutex */
+  ulint wait_time;
   /** Longest wait time; protected by wait_mutex */
-  ulint n_lock_max_wait_time;
-
+  ulint wait_time_max;
+public:
   /**
     Constructor.
 
@@ -780,6 +787,22 @@ public:
 
   /** Closes the lock system at database shutdown. */
   void close();
+
+
+  /** Note that a record lock wait started */
+  inline void wait_start();
+
+  /** Note that a record lock wait resumed */
+  inline void wait_resume(THD *thd, my_hrtime_t start, my_hrtime_t now);
+
+  /** @return pending number of lock waits */
+  ulint get_wait_pending() const { return wait_pending; }
+  /** @return cumulative number of lock waits */
+  ulint get_wait_cumulative() const { return wait_count; }
+  /** Cumulative wait time; protected by wait_mutex */
+  ulint get_wait_time_cumulative() const { return wait_time; }
+  /** Longest wait time; protected by wait_mutex */
+  ulint get_wait_time_max() const { return wait_time_max; }
 
   /** @return the hash value for a page address */
   ulint hash(const page_id_t id) const

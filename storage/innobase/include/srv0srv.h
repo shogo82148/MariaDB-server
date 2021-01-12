@@ -146,16 +146,6 @@ struct srv_stats_t
 	/** Number of data read in total (in bytes) */
 	ulint_ctr_1_t		data_read;
 
-	/** Wait time of database locks */
-	int64_ctr_1_t		n_lock_wait_time;
-
-	/** Number of database lock waits */
-	ulint_ctr_1_t		n_lock_wait_count;
-
-	/** Number of threads currently waiting on database locks */
-	MY_ALIGNED(CACHE_LINE_SIZE) Atomic_counter<ulint>
-				n_lock_wait_current_count;
-
 	/** Number of rows read. */
 	ulint_ctr_64_t		n_rows_read;
 
