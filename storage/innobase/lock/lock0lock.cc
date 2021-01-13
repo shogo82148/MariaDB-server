@@ -2433,7 +2433,7 @@ lock_move_rec_list_end(
 
   {
     const page_id_t id{block->page.id()};
-    LockGuard g{id};
+    LockMultiGuard g{id, new_block->page.id()};
 
     /* Note: when we move locks from record to record, waiting locks
     and possible granted gap type locks behind them are enqueued in
@@ -2551,7 +2551,7 @@ lock_move_rec_list_start(
 
   {
     const page_id_t id{block->page.id()};
-    LockGuard g{id};
+    LockMultiGuard g{id, new_block->page.id()};
 
     for (lock_t *lock= lock_sys.get_first(id); lock;
          lock= lock_rec_get_next_on_page(lock))
@@ -2654,7 +2654,7 @@ lock_rtr_move_rec_list(
 
   {
     const page_id_t id{block->page.id()};
-    LockGuard g{id};
+    LockMultiGuard g{id, new_block->page.id()};
 
     for (lock_t *lock= lock_sys.get_first(id); lock;
 	 lock= lock_rec_get_next_on_page(lock))
@@ -2720,7 +2720,7 @@ lock_update_split_right(
 {
 	ulint	heap_no = lock_get_min_heap_no(right_block);
 
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockMultiGuard g{right_block->page.id(), left_block->page.id()};
 
 	/* Move the locks on the supremum of the left page to the supremum
 	of the right page */
@@ -2752,7 +2752,7 @@ lock_update_merge_right(
 {
 	ut_ad(!page_rec_is_metadata(orig_succ));
 
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockMultiGuard g{right_block->page.id(), left_block->page.id()};
 
 	/* Inherit the locks from the supremum of the left page to the
 	original successor of infimum on the right page, to which the left
@@ -2788,7 +2788,7 @@ lock_update_root_raise(
 	const buf_block_t*	block,	/*!< in: index page to which copied */
 	const buf_block_t*	root)	/*!< in: root page */
 {
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockMultiGuard g{block->page.id(), root->page.id()};
 
 	/* Move the locks on the supremum of the root to the supremum
 	of block */
@@ -2808,7 +2808,7 @@ lock_update_copy_and_discard(
 	const buf_block_t*	block)		/*!< in: index page;
 						NOT the root! */
 {
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockMultiGuard g{new_block->page.id(), block->page.id()};
 
 	/* Move the locks on the supremum of the old page to the supremum
 	of new_page */
@@ -2828,7 +2828,7 @@ lock_update_split_left(
 {
 	ulint	heap_no = lock_get_min_heap_no(right_block);
 
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockMultiGuard g{right_block->page.id(), left_block->page.id()};
 
 	/* Inherit the locks to the supremum of the left page from the
 	successor of the infimum on the right page */
@@ -2854,7 +2854,7 @@ lock_update_merge_left(
 
 	ut_ad(left_block->frame == page_align(orig_pred));
 
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockMultiGuard g{left_block->page.id(), right_block->page.id()};
 
 	left_next_rec = page_rec_get_next_const(orig_pred);
 
@@ -2904,7 +2904,7 @@ lock_rec_reset_and_inherit_gap_locks(
 	ulint			heap_no)	/*!< in: heap_no of the
 						donating record */
 {
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockMultiGuard g{heir_block->page.id(), block->page.id()};
 
 	lock_rec_reset_and_release_wait(heir_block, heir_heap_no);
 
@@ -2928,7 +2928,7 @@ lock_update_discard(
 	ulint		heap_no;
 	const page_id_t	page_id(block->page.id());
 
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockMultiGuard g{heir_block->page.id(), block->page.id()};
 
 	if (lock_sys.get_first(page_id)) {
 		ut_ad(!lock_sys.get_first_prdt(page_id));
@@ -3034,7 +3034,7 @@ lock_update_delete(
 								       FALSE));
 	}
 
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockGuard g{block->page.id()};
 
 	/* Let the next record inherit the locks from rec, in gap mode */
 
@@ -3066,7 +3066,7 @@ lock_rec_store_on_page_infimum(
 
 	ut_ad(block->frame == page_align(rec));
 
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockGuard g{block->page.id()};
 
 	lock_rec_move(block, block, PAGE_HEAP_NO_INFIMUM, heap_no);
 }
@@ -3088,7 +3088,7 @@ lock_rec_restore_from_page_infimum(
 {
 	ulint	heap_no = page_rec_get_heap_no(rec);
 
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockGuard g{block->page.id()};
 
 	lock_rec_move(block, donator, heap_no, PAGE_HEAP_NO_INFIMUM);
 }
@@ -4869,7 +4869,7 @@ lock_rec_convert_impl_to_expl_for_trx(
 
   DEBUG_SYNC_C("before_lock_rec_convert_impl_to_expl_for_trx");
   {
-    LockMutexGuard g{SRW_LOCK_CALL};
+    LockGuard g{block->page.id()};
     trx->mutex.wr_lock();
     ut_ad(!trx_state_eq(trx, TRX_STATE_NOT_STARTED));
 
@@ -6331,7 +6331,7 @@ lock_update_split_and_merge(
 	ut_ad(page_is_leaf(right_block->frame));
 	ut_ad(page_align(orig_pred) == left_block->frame);
 
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockMultiGuard g{left_block->page.id(), right_block->page.id()};
 
 	left_next_rec = page_rec_get_next_const(orig_pred);
 	ut_ad(!page_rec_is_metadata(left_next_rec));

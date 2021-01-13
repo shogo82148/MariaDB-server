@@ -2275,8 +2275,9 @@ public:
 	ulong					n_waiting_or_granted_auto_inc_locks;
 
 	/** The transaction that currently holds the the AUTOINC lock on this
-	table. Protected by lock_sys.latch. */
-	const trx_t*				autoinc_trx;
+	table. Protected by lock_sys.latch and table shard latch. */
+	/* FIXME: "peek" ... */
+	Atomic_relaxed<const trx_t*> autoinc_trx;
 
 	/* @} */
 
@@ -2291,7 +2292,7 @@ public:
 	/** Count of the number of record locks on this table. We use this to
 	determine whether we can evict the table from the dictionary cache.
 	Protected by LockGuard. */
-	ulint n_rec_locks;
+	Atomic_counter<ulint> n_rec_locks;
 
 private:
 	/** Count of how many handles are opened to this table. Dropping of the

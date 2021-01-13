@@ -548,8 +548,8 @@ struct trx_lock_t {
 					mutex to prevent recursive deadlocks.
 					Protected by both lock_sys.latch
 					and the trx_t::mutex. */
-  /** number of record locks; writers use LockGuard or LockMutexGuard */
-  ulint n_rec_locks;
+  /** number of record locks; writers use LockGuard or LockMultiGuard */
+  Atomic_counter<ulint> n_rec_locks;
 };
 
 /** Logical first modification time of a table in a transaction */

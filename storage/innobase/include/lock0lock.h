@@ -874,6 +874,14 @@ struct LockGuard
   ~LockGuard() { lock_sys.wr_unlock(); }
 };
 
+/** lock_sys.latch guard for 2 page_id_t shards */
+struct LockMultiGuard
+{
+  LockMultiGuard(const page_id_t, const page_id_t)
+  { lock_sys.wr_lock(SRW_LOCK_CALL); }
+  ~LockMultiGuard() { lock_sys.wr_unlock(); }
+};
+
 /*********************************************************************//**
 Creates a new record lock and inserts it to the lock queue. Does NOT check
 for deadlocks or lock compatibility!
