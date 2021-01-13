@@ -1147,8 +1147,8 @@ srv_export_innodb_status(void)
 	mysql_mutex_unlock(&lock_sys.wait_mutex);
 
 	export_vars.innodb_row_lock_time_avg= export_vars.innodb_row_lock_waits
-		? export_vars.innodb_row_lock_time
-		/ export_vars.innodb_row_lock_waits
+		? static_cast<ulint>(export_vars.innodb_row_lock_time
+				     / export_vars.innodb_row_lock_waits)
 		: 0;
 
 	export_vars.innodb_rows_read = srv_stats.n_rows_read;
