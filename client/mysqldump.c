@@ -42,6 +42,11 @@
 /* on merge conflict, bump to a higher version again */
 #define DUMP_VERSION "10.19"
 
+/**
+  First mysql version supporting sequences.
+*/
+#define FIRST_SEQUENCE_VERSION 100300
+
 #include <my_global.h>
 #include <my_sys.h>
 #include <my_user.h>
@@ -91,6 +96,13 @@
 
 /* Max length GTID position that we will output. */
 #define MAX_GTID_LENGTH 1024
+
+
+/* Dump sequence/tables control */
+#define DUMP_TABLE_TABLE 1
+#define DUMP_TABLE_SEQUENCE 2
+#define DUMP_TABLE_ALL (DUMP_TABLE_TABLE | DUMP_TABLE_SEQUENCE)
+
 
 static my_bool ignore_table_data(const uchar *hash_key, size_t len);
 static void add_load_option(DYNAMIC_STRING *str, const char *option,
@@ -171,6 +183,7 @@ static DYNAMIC_STRING dynamic_where;
 static MYSQL_RES *get_table_name_result= NULL;
 static MEM_ROOT glob_root;
 static MYSQL_RES *routine_res, *routine_list_res;
+static int get_table_name_result_short= 1;
 
 
 #include <sslopt-vars.h>
@@ -3853,13 +3866,16 @@ static char *alloc_query_str(size_t size)
   ARGS
    table - table name
    db    - db name
+   type_ctrl - dump table or sequences or both
 
    RETURNS
     void
 */
 
 
-static void dump_table(const char *table, const char *db, const uchar *hash_key, size_t len)
+static void dump_table(const char *table, const char *db,
+                       const uchar *hash_key, size_t len,
+                       const uint type_ctrl)
 {
   char ignore_flag;
   char buf[200], table_buff[NAME_LEN+3];
@@ -3881,9 +3897,11 @@ static void dump_table(const char *table, const char *db, const uchar *hash_key,
   */
   if (check_if_ignore_table(table, table_type) & IGNORE_SEQUENCE_TABLE)
   {
-    get_sequence_structure(table, db);
+    if (type_ctrl & DUMP_TABLE_SEQUENCE)
+      get_sequence_structure(table, db);
     DBUG_VOID_RETURN;
-  }
+  } else if (!(type_ctrl & DUMP_TABLE_TABLE))
+    DBUG_VOID_RETURN;
   /*
     Make sure you get the create table info before the following check for
     --no-data flag below. Otherwise, the create table info won't be printed.
@@ -4368,18 +4386,49 @@ err:
 } /* dump_table */
 
 
-static char *getTableName(int reset)
+static char *getTableName(int reset, uint table_control)
 {
   MYSQL_ROW row;
 
   if (!get_table_name_result)
   {
-    if (!(get_table_name_result= mysql_list_tables(mysql,NullS)))
-      return(NULL);
+    if (mysql_get_server_version(mysql) >= FIRST_SEQUENCE_VERSION)
+    {
+      const char *query=
+        "SHOW FULL TABLES";
+
+      if (mysql_query_with_error_report(mysql, 0, query))
+        return (NULL);
+
+      if (!(get_table_name_result= mysql_store_result(mysql)))
+        return (NULL);
+
+      get_table_name_result_short= 0;
+    }
+    else
+    {
+      if (!(get_table_name_result= mysql_list_tables(mysql,NullS)))
+        return(NULL);
+      get_table_name_result_short= 1;
+    }
   }
   if ((row= mysql_fetch_row(get_table_name_result)))
-    return((char*) row[0]);
-
+  {
+    int sequence;
+    if (get_table_name_result_short ||
+        table_control == DUMP_TABLE_ALL)
+      return((char*) row[0]);
+    while (row &&
+             (((sequence= (strcmp(row[1], "SEQUENCE") == 0)) &&
+               (table_control & DUMP_TABLE_TABLE)) ||
+              ((!sequence) &&
+               (table_control & DUMP_TABLE_SEQUENCE))))
+    {
+      row= mysql_fetch_row(get_table_name_result);
+    }
+    if (row)
+      return((char*) row[0]);
+  }
   if (reset)
     mysql_data_seek(get_table_name_result,0);      /* We want to read again */
   else
@@ -4785,17 +4834,17 @@ static int dump_all_stats()
   /* EITS added in 10.0.1 */
   if (mysql_get_server_version(mysql) >= 100001)
   {
-    dump_table("column_stats", "mysql", NULL, 0);
-    dump_table("index_stats", "mysql", NULL, 0);
-    dump_table("table_stats", "mysql", NULL, 0);
+    dump_table("column_stats", "mysql", NULL, 0, DUMP_TABLE_TABLE);
+    dump_table("index_stats", "mysql", NULL, 0, DUMP_TABLE_TABLE);
+    dump_table("table_stats", "mysql", NULL, 0, DUMP_TABLE_TABLE);
   }
   /* Innodb may be disabled */
   if (!mysql_query(mysql, "show fields from innodb_index_stats"))
   {
     MYSQL_RES *tableres= mysql_store_result(mysql);
     mysql_free_result(tableres);
-    dump_table("innodb_index_stats", "mysql", NULL, 0);
-    dump_table("innodb_table_stats", "mysql", NULL, 0);
+    dump_table("innodb_index_stats", "mysql", NULL, 0, DUMP_TABLE_TABLE);
+    dump_table("innodb_table_stats", "mysql", NULL, 0, DUMP_TABLE_TABLE);
   }
   opt_no_create_info= prev_no_create_info;
   return 0;
@@ -4817,11 +4866,11 @@ static int dump_all_timezones()
   opt_prev_no_create_info= opt_no_create_info;
   opt_no_create_info= 1;
   fprintf(md_result_file,"\nUSE mysql;\n");
-  dump_table("time_zone", "mysql", NULL, 0);
-  dump_table("time_zone_name", "mysql", NULL, 0);
-  dump_table("time_zone_leap_second", "mysql", NULL, 0);
-  dump_table("time_zone_transition", "mysql", NULL, 0);
-  dump_table("time_zone_transition_type", "mysql", NULL, 0);
+  dump_table("time_zone", "mysql", NULL, 0, DUMP_TABLE_TABLE);
+  dump_table("time_zone_name", "mysql", NULL, 0, DUMP_TABLE_TABLE);
+  dump_table("time_zone_leap_second", "mysql", NULL, 0, DUMP_TABLE_TABLE);
+  dump_table("time_zone_transition", "mysql", NULL, 0, DUMP_TABLE_TABLE);
+  dump_table("time_zone_transition_type", "mysql", NULL, 0, DUMP_TABLE_TABLE);
   opt_no_create_info= opt_prev_no_create_info;
   return 0;
 }
@@ -5298,6 +5347,7 @@ static int dump_all_tables_in_db(char *database)
   my_bool general_log_table_exists= 0, slow_log_table_exists=0;
   my_bool transaction_registry_table_exists= 0;
   int using_mysql_db= !my_strcasecmp(charset_info, database, "mysql");
+  uint table_ctrl= DUMP_TABLE_ALL;
   DBUG_ENTER("dump_all_tables_in_db");
 
   afterdot= strmov(hash_key, database);
@@ -5312,7 +5362,7 @@ static int dump_all_tables_in_db(char *database)
   {
     DYNAMIC_STRING query;
     init_dynamic_string_checked(&query, "LOCK TABLES ", 256, 1024);
-    for (numrows= 0 ; (table= getTableName(1)) ; )
+    for (numrows= 0 ; (table= getTableName(1, DUMP_TABLE_ALL)) ; )
     {
       char *end= strmov(afterdot, table);
       if (include_table((uchar*) hash_key,end - hash_key))
@@ -5346,12 +5396,29 @@ static int dump_all_tables_in_db(char *database)
       DBUG_RETURN(1);
     }
   }
-  while ((table= getTableName(0)))
+
+  if (mysql_get_server_version(mysql) >= FIRST_SEQUENCE_VERSION &&
+      !opt_no_create_info)
+  {
+    // First process sequences
+    while ((table= getTableName(1, DUMP_TABLE_SEQUENCE)))
+    {
+      char *end= strmov(afterdot, table);
+      if (include_table((uchar*) hash_key, end - hash_key))
+      {
+        dump_table(table, database, (uchar*) hash_key, end - hash_key,
+                   DUMP_TABLE_SEQUENCE);
+      }
+    }
+    table_ctrl= DUMP_TABLE_TABLE; // next pass
+  }
+  while ((table= getTableName(0, table_ctrl)))
   {
     char *end= strmov(afterdot, table);
     if (include_table((uchar*) hash_key, end - hash_key))
     {
-      dump_table(table, database, (uchar*) hash_key, end - hash_key);
+      dump_table(table, database, (uchar*) hash_key, end - hash_key,
+                 table_ctrl);
       my_free(order_by);
       order_by= 0;
       if (opt_dump_triggers && mysql_get_server_version(mysql) >= 50009)
@@ -5495,7 +5562,7 @@ static my_bool dump_all_views_in_db(char *database)
   {
     DYNAMIC_STRING query;
     init_dynamic_string_checked(&query, "LOCK TABLES ", 256, 1024);
-    for (numrows= 0 ; (table= getTableName(1)); )
+    for (numrows= 0 ; (table= getTableName(1, DUMP_TABLE_TABLE)); )
     {
       char *end= strmov(afterdot, table);
       if (include_table((uchar*) hash_key,end - hash_key))
@@ -5518,7 +5585,7 @@ static my_bool dump_all_views_in_db(char *database)
     else
       verbose_msg("-- dump_all_views_in_db : logs flushed successfully!\n");
   }
-  while ((table= getTableName(0)))
+  while ((table= getTableName(0, DUMP_TABLE_TABLE)))
   {
     char *end= strmov(afterdot, table);
     if (include_table((uchar*) hash_key, end - hash_key))
@@ -5652,6 +5719,7 @@ static int dump_selected_tables(char *db, char **table_names, int tables)
   DYNAMIC_STRING lock_tables_query;
   char **dump_tables, **pos, **end;
   int lower_case_table_names;
+  uint table_ctrl= DUMP_TABLE_TABLE; // prepared for second pass
   DBUG_ENTER("dump_selected_tables");
 
   if (init_dumping(db, init_dumping_tables))
@@ -5745,11 +5813,24 @@ static int dump_selected_tables(char *db, char **table_names, int tables)
       DBUG_RETURN(1);
     }
   }
+
+  if (mysql_get_server_version(mysql) >= FIRST_SEQUENCE_VERSION &&
+      !opt_no_create_info)
+  {
+    /* Dump Sequence first */
+    for (pos= dump_tables; pos < end; pos++)
+    {
+      DBUG_PRINT("info",("Dumping sequence(?) %s", *pos));
+      dump_table(*pos, db, NULL, 0, DUMP_TABLE_SEQUENCE);
+    }
+  }
+  else
+    table_ctrl|= DUMP_TABLE_SEQUENCE; // dump all on next pass
   /* Dump each selected table */
   for (pos= dump_tables; pos < end; pos++)
   {
     DBUG_PRINT("info",("Dumping table %s", *pos));
-    dump_table(*pos, db, NULL, 0);
+    dump_table(*pos, db, NULL, 0, table_ctrl);
     if (opt_dump_triggers &&
         mysql_get_server_version(mysql) >= 50009)
     {
