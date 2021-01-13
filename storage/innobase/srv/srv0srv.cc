@@ -465,19 +465,13 @@ lock			--	semaphore;
 kernel			--	kernel;
 
 query thread execution:
-(a) without lock mutex
+(a) without lock_sys.latch
 reserved		--	process executing in user mode;
-(b) with lock mutex reserved
+(b) with lock_sys.latch reserved
 			--	process executing in kernel mode;
 
-The server has several backgroind threads all running at the same
-priority as user threads. It periodically checks if here is anything
-happening in the server which requires intervention of the master
-thread. Such situations may be, for example, when flushing of dirty
-blocks is needed in the buffer pool or old version of database rows
-have to be cleaned away (purged). The user can configure a separate
-dedicated purge thread(s) too, in which case the master thread does not
-do any purging.
+The server has several background threads all running at the same
+priority as user threads.
 
 The threads which we call user threads serve the queries of the MySQL
 server. They run at normal priority.
@@ -836,7 +830,7 @@ srv_printf_innodb_monitor(
 	/* Only if lock_print_info_summary proceeds correctly,
 	before we call the lock_print_info_all_transactions
 	to print all the lock information. IMPORTANT NOTE: This
-	function acquires the lock mutex on success. */
+	function acquires exclusive lock_sys.latch on success. */
 	ret = lock_print_info_summary(file, nowait);
 
 	if (ret) {
@@ -849,9 +843,8 @@ srv_printf_innodb_monitor(
 			}
 		}
 
-		/* NOTE: If we get here then we have the lock mutex. This
-		function will release the lock mutex that we acquired when
-		we called the lock_print_info_summary() function earlier. */
+		/* NOTE: The following function will release the lock_sys.latch
+		that lock_print_info_summary() acquired. */
 
 		lock_print_info_all_transactions(file);
 

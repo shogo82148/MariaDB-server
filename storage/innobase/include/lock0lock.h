@@ -510,13 +510,12 @@ lock_report_trx_id_insanity(
 	trx_id_t	max_trx_id);	/*!< in: trx_sys.get_max_trx_id() */
 /*********************************************************************//**
 Prints info of locks for all transactions.
-@return FALSE if not able to obtain lock mutex and exits without
-printing info */
+@return FALSE if not able to acquire lock_sys.latch (and display info) */
 ibool
 lock_print_info_summary(
 /*====================*/
 	FILE*	file,	/*!< in: file where to print */
-	ibool   nowait)	/*!< in: whether to wait for the lock mutex */
+	ibool   nowait)	/*!< in: whether to wait for lock_sys.latch */
 	MY_ATTRIBUTE((warn_unused_result));
 
 /** Prints transaction lock wait and MVCC state.
@@ -527,9 +526,8 @@ void lock_trx_print_wait_and_mvcc_state(FILE *file, const trx_t *trx,
                                         my_hrtime_t now);
 
 /*********************************************************************//**
-Prints info of locks for each transaction. This function assumes that the
-caller holds the lock mutex and more importantly it will release the lock
-mutex on behalf of the caller. (This should be fixed in the future). */
+Prints info of locks for each transaction. This function will release
+lock_sys.latch, which the caller must be holding in exclusive mode. */
 void
 lock_print_info_all_transactions(
 /*=============================*/

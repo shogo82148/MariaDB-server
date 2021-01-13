@@ -3499,7 +3499,7 @@ lock_table(
 	trx = thr_get_trx(thr);
 
 	/* Look for equal or stronger locks the same trx already
-	has on the table. No need to acquire the lock mutex here
+	has on the table. No need to acquire the lock_sys.latch here
 	because only this transacton can add/access table locks
 	to/from trx_t::table_locks. */
 
@@ -3898,7 +3898,7 @@ lock_trx_table_locks_remove(
 
 	lock_sys.assert_locked();
 
-	/* It is safe to read this because we are holding the lock mutex */
+	/* It is safe to read this because we are holding lock_sys.latch */
 	const bool have_mutex = trx->lock.cancel;
 	if (!have_mutex) {
 		trx->mutex.wr_lock();
@@ -4092,17 +4092,13 @@ static ulint lock_get_n_rec_locks()
 
 /*********************************************************************//**
 Prints info of locks for all transactions.
-@return FALSE if not able to obtain lock mutex
-and exits without printing info */
+@return FALSE if not able to acquire lock_sys.latch (and dislay info) */
 ibool
 lock_print_info_summary(
 /*====================*/
 	FILE*	file,	/*!< in: file where to print */
-	ibool	nowait)	/*!< in: whether to wait for the lock mutex */
+	ibool	nowait)	/*!< in: whether to wait for lock_sys.latch */
 {
-	/* if nowait is FALSE, wait on the lock mutex,
-	otherwise return immediately if fail to obtain the
-	mutex. */
 	if (!nowait) {
 		lock_sys.wr_lock(SRW_LOCK_CALL);
 	} else /* if (lock_sys.mutex_trylock()) */ {
@@ -4237,9 +4233,8 @@ struct lock_print_info
 };
 
 /*********************************************************************//**
-Prints info of locks for each transaction. This function assumes that the
-caller holds the lock mutex and more importantly it will release the lock
-mutex on behalf of the caller. (This should be fixed in the future). */
+Prints info of locks for each transaction. This function will release
+lock_sys.latch, which the caller must be holding in exclusive mode. */
 void
 lock_print_info_all_transactions(
 /*=============================*/
@@ -4338,7 +4333,7 @@ lock_rec_queue_validate(
 /*====================*/
 	bool			locked_lock_trx_sys,
 					/*!< in: if the caller holds
-					both the lock mutex and
+					both the lock_sys.latch and
 					trx_sys_t->lock. */
 	const buf_block_t*	block,	/*!< in: buffer block containing rec */
 	const rec_t*		rec,	/*!< in: record to look at */
@@ -5797,7 +5792,7 @@ lock_trx_has_expl_x_lock(
 {
 	ut_ad(heap_no > PAGE_HEAP_NO_SUPREMUM);
 
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockGuard g{block->page.id()};
 	ut_ad(lock_table_has(trx, table, LOCK_IX));
 	ut_ad(lock_table_has(trx, table, LOCK_X)
 	      || lock_rec_has_expl(LOCK_X | LOCK_REC_NOT_GAP, block, heap_no,
