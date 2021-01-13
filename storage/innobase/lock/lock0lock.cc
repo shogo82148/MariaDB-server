@@ -897,7 +897,7 @@ lock_rec_get_prev(
 	lock_t*		lock;
 	lock_t*		found_lock	= NULL;
 
-	lock_sys.assert_locked();
+	lock_sys.assert_locked(in_lock->un_member.rec_lock.page_id);
 	ut_ad(lock_get_type_low(in_lock) == LOCK_REC);
 
 	for (lock = lock_sys.get_first(*lock_hash_get(in_lock->type_mode),
@@ -1229,11 +1229,23 @@ wsrep_print_wait_locks(
 }
 #endif /* WITH_WSREP */
 
+/** Assert that a lock shard is exclusively latched by this thread */
+inline void lock_sys_t::assert_locked(const lock_t &) const
+{
+  assert_locked();
+}
+
+/** Assert that a table lock shard is exclusively latched by this thread */
+inline void lock_sys_t::assert_locked(const dict_table_t &) const
+{
+  assert_locked();
+}
+
 /** Reset the wait status of a lock.
 @param[in,out]	lock	lock that was possibly being waited for */
 static void lock_reset_lock_and_trx_wait(lock_t *lock)
 {
-  lock_sys.assert_locked();
+  lock_sys.assert_locked(*lock);
   ut_ad(lock_get_wait(lock));
   ut_ad(!lock->trx->lock.wait_lock || lock->trx->lock.wait_lock == lock);
   lock->trx->lock.wait_lock= nullptr;
@@ -1250,7 +1262,7 @@ static void lock_set_lock_and_trx_wait(lock_t *lock, trx_t *trx)
   ut_ad(lock->trx == trx);
   ut_ad(!trx->lock.wait_lock || trx->lock.wait_lock != lock);
   ut_ad(!trx->lock.wait_lock || (*trx->lock.wait_lock).trx == trx);
-  lock_sys.assert_locked();
+  lock_sys.assert_locked(*lock);
 
   trx->lock.wait_lock= lock;
   lock->type_mode|= LOCK_WAIT;
@@ -1286,7 +1298,7 @@ lock_rec_create_low(
 	ulint		n_bits;
 	ulint		n_bytes;
 
-	lock_sys.assert_locked();
+	lock_sys.assert_locked(page_id);
 	ut_ad(dict_index_is_clust(index) || !dict_index_is_online_ddl(index));
 
 #ifdef UNIV_DEBUG
@@ -1568,7 +1580,7 @@ lock_rec_find_similar_on_page(
 	lock_t*         lock,           /*!< in: lock_sys.get_first() */
 	const trx_t*    trx)            /*!< in: transaction */
 {
-	lock_sys.assert_locked();
+	lock_sys.assert_locked(lock->un_member.rec_lock.page_id);
 
 	for (/* No op */;
 	     lock != NULL;
@@ -1609,7 +1621,7 @@ lock_rec_add_to_queue(
 					/*!< in: TRUE if caller owns the
 					transaction mutex */
 {
-	lock_sys.assert_locked();
+	ut_d(lock_sys.assert_locked(block->page.id()));
 	ut_ad(index->is_primary()
 	      || dict_index_get_online_status(index) != ONLINE_INDEX_CREATION);
 #ifdef UNIV_DEBUG
@@ -1738,7 +1750,8 @@ lock_rec_lock(
   ut_ad(dict_index_is_clust(index) || !dict_index_is_online_ddl(index));
   DBUG_EXECUTE_IF("innodb_report_deadlock", return DB_DEADLOCK;);
   MONITOR_ATOMIC_INC(MONITOR_NUM_RECLOCK_REQ);
-  LockMutexGuard g{SRW_LOCK_CALL};
+  const page_id_t id{block->page.id()};
+  LockGuard g{id};
   ut_ad((LOCK_MODE_MASK & mode) != LOCK_S ||
         lock_table_has(trx, index->table, LOCK_IS));
   ut_ad((LOCK_MODE_MASK & mode) != LOCK_X ||
@@ -1746,7 +1759,7 @@ lock_rec_lock(
 
   if (lock_table_has(trx, index->table,
                      static_cast<lock_mode>(LOCK_MODE_MASK & mode)));
-  else if (lock_t *lock= lock_sys.get_first(block->page.id()))
+  else if (lock_t *lock= lock_sys.get_first(id))
   {
     trx->mutex.wr_lock();
     if (lock_rec_get_next_on_page(lock) ||
@@ -1830,9 +1843,9 @@ lock_rec_has_to_wait_in_queue(
 	ulint		bit_offset;
 
 	ut_ad(wait_lock);
-	lock_sys.assert_locked();
 	ut_ad(lock_get_wait(wait_lock));
 	ut_ad(lock_get_type_low(wait_lock) == LOCK_REC);
+	lock_sys.assert_locked(wait_lock->un_member.rec_lock.page_id);
 
 	heap_no = lock_rec_find_set_bit(wait_lock);
 
@@ -1858,7 +1871,7 @@ lock_rec_has_to_wait_in_queue(
 /** Grant a waiting lock request and release the waiting transaction. */
 static void lock_grant(lock_t *lock)
 {
-  lock_sys.assert_locked();
+  lock_sys.assert_locked(*lock);
   mysql_mutex_assert_owner(&lock_sys.wait_mutex);
   lock_reset_lock_and_trx_wait(lock);
   auto mutex= &lock->trx->mutex;
@@ -1871,6 +1884,7 @@ static void lock_grant(lock_t *lock)
       ib::error() << "Transaction already had an AUTO-INC lock!";
     else
     {
+      ut_ad(!table->autoinc_trx);
       table->autoinc_trx= lock->trx;
       ib_vector_push(lock->trx->autoinc_locks, &lock);
     }
@@ -1929,12 +1943,12 @@ static void lock_rec_dequeue_from_page(lock_t* in_lock)
 {
 	hash_table_t*	lock_hash;
 
-	lock_sys.assert_locked();
 	mysql_mutex_assert_owner(&lock_sys.wait_mutex);
 	ut_ad(lock_get_type_low(in_lock) == LOCK_REC);
 	/* We may or may not be holding in_lock->trx->mutex here. */
 
 	const page_id_t page_id(in_lock->un_member.rec_lock.page_id);
+	lock_sys.assert_locked(page_id);
 
 	in_lock->index->table->n_rec_locks--;
 
@@ -1983,7 +1997,7 @@ lock_rec_discard(
 {
 	trx_lock_t*	trx_lock;
 
-	lock_sys.assert_locked();
+	lock_sys.assert_locked(in_lock->un_member.rec_lock.page_id);
 	ut_ad(lock_get_type_low(in_lock) == LOCK_REC);
 
 	trx_lock = &in_lock->trx->lock;
@@ -2100,6 +2114,7 @@ lock_rec_inherit_to_gap(
 {
 	const page_id_t id{block->page.id()};
 	lock_sys.assert_locked(id);
+	ut_d(lock_sys.assert_locked(heir_block->page.id()));
 
 	/* At READ UNCOMMITTED or READ COMMITTED isolation level,
 	we do not want locks set
@@ -2418,7 +2433,7 @@ lock_move_rec_list_end(
 
   {
     const page_id_t id{block->page.id()};
-    LockMultiGuard g{id, new_block->page.id()};
+    LockGuard g{id};
 
     /* Note: when we move locks from record to record, waiting locks
     and possible granted gap type locks behind them are enqueued in
@@ -2536,7 +2551,7 @@ lock_move_rec_list_start(
 
   {
     const page_id_t id{block->page.id()};
-    LockMultiGuard g{id, new_block->page.id()};
+    LockGuard g{id};
 
     for (lock_t *lock= lock_sys.get_first(id); lock;
          lock= lock_rec_get_next_on_page(lock))
@@ -3109,7 +3124,7 @@ lock_table_create(
 	lock_t*		lock;
 
 	ut_ad(table && trx);
-	lock_sys.assert_locked();
+	lock_sys.assert_locked(*table);
 
 	check_trx_state(trx);
 
@@ -3124,6 +3139,7 @@ lock_table_create(
 
 		lock = table->autoinc_lock;
 
+		ut_ad(!table->autoinc_trx);
 		table->autoinc_trx = trx;
 
 		ib_vector_push(trx->autoinc_locks, &lock);
@@ -3210,7 +3226,6 @@ lock_table_pop_autoinc_locks(
 /*=========================*/
 	trx_t*	trx)	/*!< in/out: transaction that owns the AUTOINC locks */
 {
-	lock_sys.assert_locked();
 	ut_ad(!ib_vector_is_empty(trx->autoinc_locks));
 
 	/* Skip any gaps, gaps are NULL lock entries in the
@@ -3238,7 +3253,7 @@ lock_table_remove_autoinc_lock(
 	lock_t*	autoinc_lock;
 	lint	i = ib_vector_size(trx->autoinc_locks) - 1;
 
-	lock_sys.assert_locked();
+	lock_sys.assert_locked(*lock->un_member.tab_lock.table);
 	ut_ad(lock_get_mode(lock) == LOCK_AUTO_INC);
 	ut_ad(lock_get_type_low(lock) & LOCK_TABLE);
 	ut_ad(!ib_vector_is_empty(trx->autoinc_locks));
@@ -4854,7 +4869,7 @@ lock_rec_convert_impl_to_expl_for_trx(
 
   DEBUG_SYNC_C("before_lock_rec_convert_impl_to_expl_for_trx");
   {
-    LockGuard g{block->page.id()};
+    LockMutexGuard g{SRW_LOCK_CALL};
     trx->mutex.wr_lock();
     ut_ad(!trx_state_eq(trx, TRX_STATE_NOT_STARTED));
 
@@ -6316,7 +6331,7 @@ lock_update_split_and_merge(
 	ut_ad(page_is_leaf(right_block->frame));
 	ut_ad(page_align(orig_pred) == left_block->frame);
 
-	LockMultiGuard g{left_block->page.id(), right_block->page.id()};
+	LockMutexGuard g{SRW_LOCK_CALL};
 
 	left_next_rec = page_rec_get_next_const(orig_pred);
 	ut_ad(!page_rec_is_metadata(left_next_rec));

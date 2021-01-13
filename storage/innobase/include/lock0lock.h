@@ -774,7 +774,11 @@ public:
   void assert_unlocked() const
   { ut_ad(writer.load(std::memory_order_relaxed) != os_thread_get_curr_id()); }
   /** Assert that a page shard is exclusively latched by this thread */
-  void assert_locked(const page_id_t) { assert_locked(); }
+  void assert_locked(const page_id_t) const { assert_locked(); }
+  /** Assert that a lock shard is exclusively latched by this thread */
+  inline void assert_locked(const lock_t &lock) const;
+  /** Assert that a table lock shard is exclusively latched by this thread */
+  inline void assert_locked(const dict_table_t &table) const;
 
   /**
     Creates the lock system at database start.
@@ -813,7 +817,7 @@ public:
 
   /** @return the hash value for a page address */
   ulint hash(const page_id_t id) const
-  { assert_locked(); return rec_hash.calc_hash(id.fold()); }
+  { assert_locked(id); return rec_hash.calc_hash(id.fold()); }
 
   /** Get the first lock on a page.
   @param lock_hash   hash table to look at
@@ -868,14 +872,6 @@ struct LockGuard
 {
   LockGuard(const page_id_t) { lock_sys.wr_lock(SRW_LOCK_CALL); }
   ~LockGuard() { lock_sys.wr_unlock(); }
-};
-
-/** lock_sys.latch guard for 2 page_id_t shards */
-struct LockMultiGuard
-{
-  LockMultiGuard(const page_id_t, const page_id_t)
-  { lock_sys.wr_lock(SRW_LOCK_CALL); }
-  ~LockMultiGuard() { lock_sys.wr_unlock(); }
 };
 
 /*********************************************************************//**

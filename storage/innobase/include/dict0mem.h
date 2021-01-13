@@ -2291,7 +2291,7 @@ public:
 	/** Count of the number of record locks on this table. We use this to
 	determine whether we can evict the table from the dictionary cache.
 	Protected by LockGuard. */
-	Atomic_counter<ulint> n_rec_locks;
+	ulint n_rec_locks;
 
 private:
 	/** Count of how many handles are opened to this table. Dropping of the
