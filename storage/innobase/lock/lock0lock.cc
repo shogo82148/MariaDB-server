@@ -4101,7 +4101,7 @@ lock_print_info_summary(
 {
 	if (!nowait) {
 		lock_sys.wr_lock(SRW_LOCK_CALL);
-	} else /* if (lock_sys.mutex_trylock()) */ {
+	} else if (!lock_sys.wr_lock_try()) {
 		fputs("FAIL TO OBTAIN LOCK MUTEX,"
 		      " SKIP LOCK INFO PRINTING\n", file);
 		return(FALSE);

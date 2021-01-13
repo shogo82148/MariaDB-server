@@ -758,6 +758,15 @@ public:
     latch.rd_unlock();
   }
 #endif
+  /** Try to acquire exclusive lock_sys.latch
+  @return whether the latch was acquired */
+  bool wr_lock_try()
+  {
+    if (!latch.wr_lock_try()) return false;
+    ut_ad(!writer.exchange(os_thread_get_curr_id(),
+                           std::memory_order_relaxed));
+    return true;
+  }
   /** Assert that wr_lock() has been invoked by this thread */
   void assert_locked() const
   { ut_ad(writer.load(std::memory_order_relaxed) == os_thread_get_curr_id()); }
