@@ -4107,6 +4107,29 @@ bool ibuf_page_exists(const page_id_t id, ulint zip_size)
 	return bitmap_bits;
 }
 
+/** Reset the bits in the bitmap page for the given block and page id.
+@param b        X-latched secondary index page (nullptr to discard changes)
+@param page_id  page identifier
+@param zip_size ROW_FORMAT=COMPRESSED page size, or 0
+@param mtr      mini-transaction */
+static void ibuf_reset_bitmap(buf_block_t *b, page_id_t page_id,
+                              ulint zip_size, mtr_t *mtr)
+{
+ buf_block_t *bitmap= ibuf_bitmap_get_map_page(page_id, zip_size, mtr);
+ if (!bitmap)
+   return;
+
+ const ulint physical_size = zip_size ? zip_size : srv_page_size;
+ /* FIXME: update the bitmap byte only once! */
+ ibuf_bitmap_page_set_bits<IBUF_BITMAP_BUFFERED>(bitmap, page_id,
+                                                 physical_size, false, mtr);
+
+ if (b)
+   ibuf_bitmap_page_set_bits<IBUF_BITMAP_FREE>(bitmap, page_id, physical_size,
+                                               ibuf_index_page_calc_free(b),
+                                               mtr);
+}
+
 /** When an index page is read from a disk to the buffer pool, this function
 applies any buffered operations to the page and deletes the entries from the
 insert buffer. If the page is not read, but created in the buffer pool, this
@@ -4167,6 +4190,14 @@ void ibuf_merge_or_delete_for_page(buf_block_t *block, const page_id_t page_id,
 		}
 
 		ibuf_mtr_commit(&mtr);
+
+		if (bitmap_bits && fseg_page_is_free(
+				space, page_id.page_no())) {
+			ibuf_mtr_start(&mtr);
+			ibuf_reset_bitmap(block, page_id, zip_size, &mtr);
+			ibuf_mtr_commit(&mtr);
+			bitmap_bits = 0;
+		}
 
 		if (!bitmap_bits) {
 			/* No changes are buffered for this page. */
@@ -4371,18 +4402,8 @@ loop:
 	}
 
 reset_bit:
-	if (!space) {
-	} else if (buf_block_t* bitmap = ibuf_bitmap_get_map_page(
-			   page_id, zip_size, &mtr)) {
-		/* FIXME: update the bitmap byte only once! */
-		ibuf_bitmap_page_set_bits<IBUF_BITMAP_BUFFERED>(
-			bitmap, page_id, physical_size, false, &mtr);
-
-		if (block != NULL) {
-			ibuf_bitmap_page_set_bits<IBUF_BITMAP_FREE>(
-				bitmap, page_id, physical_size,
-				ibuf_index_page_calc_free(block), &mtr);
-		}
+	if (space) {
+		ibuf_reset_bitmap(block, page_id, zip_size, &mtr);
 	}
 
 	ibuf_mtr_commit(&mtr);
