@@ -3537,15 +3537,21 @@ lock_table_has_to_wait_in_queue(
 /*============================*/
 	const lock_t*	wait_lock)	/*!< in: waiting table lock */
 {
-	const dict_table_t*	table;
-	const lock_t*		lock;
-
 	ut_ad(wait_lock->is_waiting());
+	ut_ad(wait_lock->is_table());
 
-	table = wait_lock->un_member.tab_lock.table;
+	const dict_table_t* table = wait_lock->un_member.tab_lock.table;
 	lock_sys.assert_locked(*table);
 
-	for (lock = UT_LIST_GET_FIRST(table->locks);
+	static_assert(LOCK_IS == 0, "compatibility");
+	static_assert(LOCK_IX == 1, "compatibility");
+
+	if (UNIV_LIKELY(wait_lock->mode() <= LOCK_IX
+			&& !table->n_lock_x_or_s)) {
+		return(false);
+	}
+
+	for (const lock_t *lock = UT_LIST_GET_FIRST(table->locks);
 	     lock != wait_lock;
 	     lock = UT_LIST_GET_NEXT(un_member.tab_lock.locks, lock)) {
 
@@ -3573,10 +3579,17 @@ lock_table_dequeue(
 	lock_sys.assert_locked();
 	mysql_mutex_assert_owner(&lock_sys.wait_mutex);
 	ut_a(in_lock->is_table());
-
+	const dict_table_t* table = in_lock->un_member.tab_lock.table;
 	lock_t*	lock = UT_LIST_GET_NEXT(un_member.tab_lock.locks, in_lock);
 
 	lock_table_remove_low(in_lock);
+
+	static_assert(LOCK_IS == 0, "compatibility");
+	static_assert(LOCK_IX == 1, "compatibility");
+
+	if (UNIV_LIKELY(in_lock->mode() <= LOCK_IX && !table->n_lock_x_or_s)) {
+		return;
+	}
 
 	/* Check if waiting locks in the queue can now be granted: grant
 	locks if there are no conflicting locks ahead. */
