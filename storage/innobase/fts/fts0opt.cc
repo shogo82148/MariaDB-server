@@ -2885,6 +2885,11 @@ static void fts_optimize_callback(void *)
 		}
 	}
 
+	if (!fts_slots) {
+		/* Shutdown was already initiated. */
+		return;
+	}
+
 	/* Server is being shutdown, sync the data from FTS cache to disk
 	if needed */
 	if (n_tables > 0) {
