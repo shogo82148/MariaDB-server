@@ -424,7 +424,6 @@ fill_trx_row(
 
 	lock_sys.assert_locked();
 
-	ut_ad(trx->id);
 	row->trx_id = trx->id;
 	row->trx_started = trx->start_time;
 	row->trx_state = trx_get_que_state_str(trx);
