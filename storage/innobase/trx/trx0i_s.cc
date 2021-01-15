@@ -177,7 +177,7 @@ trx_i_s_cache_t*	trx_i_s_cache = &trx_i_s_cache_static;
 @retval 0xFFFF for table locks */
 static uint16_t wait_lock_get_heap_no(const lock_t *lock)
 {
-  return lock_get_type(lock) == LOCK_REC
+  return lock->type() == LOCK_REC
     ? static_cast<uint16_t>(lock_rec_find_set_bit(lock))
     : uint16_t{0xFFFF};
 }
@@ -594,7 +594,7 @@ fill_lock_data(
 	trx_i_s_cache_t*	cache)	/*!< in/out: cache where to store
 					volatile data */
 {
-	ut_a(lock_get_type(lock) == LOCK_REC);
+	ut_a(lock->type() == LOCK_REC);
 
 	switch (heap_no) {
 	case PAGE_HEAP_NO_INFIMUM:
@@ -698,12 +698,10 @@ static bool fill_locks_row(
 				volatile strings */
 {
 	row->lock_trx_id = lock->trx->id;
-	const auto lock_type = lock_get_type(lock);
-	ut_ad(lock_type == LOCK_REC || lock_type == LOCK_TABLE);
-
-	const bool is_gap_lock = lock_type == LOCK_REC
-		&& (lock->type_mode & LOCK_GAP);
-	switch (lock->type_mode & LOCK_MODE_MASK) {
+	const auto lock_type = lock->type();
+	const bool is_gap_lock = lock->is_gap();
+	ut_ad(!is_gap_lock || lock_type == LOCK_REC);
+	switch (lock->mode()) {
 	case LOCK_S:
 		row->lock_mode = uint8_t(1 + is_gap_lock);
 		break;
@@ -817,7 +815,7 @@ fold_lock(
 #else
 	ulint	ret;
 
-	switch (lock_get_type(lock)) {
+	switch (lock->type()) {
 	case LOCK_REC:
 		ut_a(heap_no != 0xFFFF);
 		ret = ut_fold_ulint_pair((ulint) lock->trx->id,
@@ -860,7 +858,7 @@ locks_row_eq_lock(
 #ifdef TEST_NO_LOCKS_ROW_IS_EVER_EQUAL_TO_LOCK_T
 	return(0);
 #else
-	switch (lock_get_type(lock)) {
+	switch (lock->type()) {
 	case LOCK_REC:
 		ut_a(heap_no != 0xFFFF);
 

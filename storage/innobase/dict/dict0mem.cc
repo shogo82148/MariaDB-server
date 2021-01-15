@@ -187,7 +187,7 @@ dict_table_t *dict_mem_table_create(const char *name, fil_space_t *space,
 	}
 
 	table->autoinc_lock = static_cast<ib_lock_t*>(
-		mem_heap_alloc(heap, lock_get_size()));
+		mem_heap_alloc(heap, sizeof *table->autoinc_lock));
 
 	/* If the table has an FTS index or we are in the process
 	of building one, create the table->fts */

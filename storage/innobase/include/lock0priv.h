@@ -434,15 +434,6 @@ static const ulint      lock_types = UT_ARR_SIZE(lock_compatibility_matrix);
 #endif /* UNIV_DEBUG */
 
 /*********************************************************************//**
-Gets the type of a lock.
-@return LOCK_TABLE or LOCK_REC */
-UNIV_INLINE
-ulint
-lock_get_type_low(
-/*==============*/
-	const lock_t*	lock);	/*!< in: lock */
-
-/*********************************************************************//**
 Gets the previous record lock set on a record.
 @return previous lock on the same record, NULL if none exists */
 const lock_t*
@@ -515,7 +506,7 @@ lock_rec_set_nth_bit(
 @return previous value of the bit */
 inline byte lock_rec_reset_nth_bit(lock_t* lock, ulint i)
 {
-	ut_ad(lock_get_type_low(lock) == LOCK_REC);
+	ut_ad(lock->type() == LOCK_REC);
 	lock_sys.assert_locked(lock->un_member.rec_lock.page_id);
 	ut_ad(i < lock->un_member.rec_lock.n_bits);
 
@@ -579,15 +570,6 @@ lock_rec_get_first(hash_table_t *hash, const page_id_t id, ulint heap_no)
 }
 
 /*********************************************************************//**
-Gets the mode of a lock.
-@return mode */
-UNIV_INLINE
-enum lock_mode
-lock_get_mode(
-/*==========*/
-	const lock_t*	lock);	/*!< in: lock */
-
-/*********************************************************************//**
 Calculates if lock mode 1 is compatible with lock mode 2.
 @return nonzero if mode1 compatible with mode2 */
 UNIV_INLINE
@@ -606,15 +588,6 @@ lock_mode_stronger_or_eq(
 /*=====================*/
 	enum lock_mode	mode1,	/*!< in: lock mode */
 	enum lock_mode	mode2);	/*!< in: lock mode */
-
-/*********************************************************************//**
-Gets the wait flag of a lock.
-@return LOCK_WAIT if waiting, 0 if not */
-UNIV_INLINE
-ulint
-lock_get_wait(
-/*==========*/
-	const lock_t*	lock);	/*!< in: lock */
 
 /*********************************************************************//**
 Checks if a transaction has the specified table lock, or stronger. This

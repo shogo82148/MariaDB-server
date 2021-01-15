@@ -238,6 +238,8 @@ struct ib_lock_t
 	}
 
 	ulint type() const {
+		ut_ad((type_mode & LOCK_TYPE_MASK) == LOCK_REC
+		      || (type_mode & LOCK_TYPE_MASK) == LOCK_TABLE);
 		return(type_mode & LOCK_TYPE_MASK);
 	}
 
