@@ -3052,30 +3052,35 @@ lock_table_create(
 
 	check_trx_state(trx);
 
-	if ((type_mode & LOCK_MODE_MASK) == LOCK_AUTO_INC) {
+	switch (LOCK_MODE_MASK & type_mode) {
+	case LOCK_AUTO_INC:
 		++table->n_waiting_or_granted_auto_inc_locks;
+		/* For AUTOINC locking we reuse the lock instance only if
+		there is no wait involved else we allocate the waiting lock
+		from the transaction lock heap. */
+		if (type_mode == LOCK_AUTO_INC) {
+			lock = table->autoinc_lock;
+
+			ut_ad(!table->autoinc_trx);
+			table->autoinc_trx = trx;
+
+			ib_vector_push(trx->autoinc_locks, &lock);
+			goto allocated;
+		}
+
+		break;
+	case LOCK_X:
+	case LOCK_S:
+		++table->n_lock_x_or_s;
+		break;
 	}
 
-	/* For AUTOINC locking we reuse the lock instance only if
-	there is no wait involved else we allocate the waiting lock
-	from the transaction lock heap. */
-	if (type_mode == LOCK_AUTO_INC) {
-		lock = table->autoinc_lock;
+	lock = trx->lock.table_cached < array_elements(trx->lock.table_pool)
+		? &trx->lock.table_pool[trx->lock.table_cached++]
+		: static_cast<lock_t*>(
+			mem_heap_alloc(trx->lock.lock_heap, sizeof *lock));
 
-		ut_ad(!table->autoinc_trx);
-		table->autoinc_trx = trx;
-
-		ib_vector_push(trx->autoinc_locks, &lock);
-
-	} else if (trx->lock.table_cached
-		   < UT_ARR_SIZE(trx->lock.table_pool)) {
-		lock = &trx->lock.table_pool[trx->lock.table_cached++];
-	} else {
-
-		lock = static_cast<lock_t*>(
-			mem_heap_alloc(trx->lock.lock_heap, sizeof(*lock)));
-	}
-
+allocated:
 	lock->type_mode = ib_uint32_t(type_mode | LOCK_TABLE);
 	lock->trx = trx;
 
@@ -3234,7 +3239,8 @@ lock_table_remove_low(
 
 	/* Remove the table from the transaction's AUTOINC vector, if
 	the lock that is being released is an AUTOINC lock. */
-	if (lock->mode() == LOCK_AUTO_INC) {
+	switch (lock->mode()) {
+	case LOCK_AUTO_INC:
 		/* The table's AUTOINC lock can get transferred to
 		another transaction before we get here. */
 		if (table->autoinc_trx == trx) {
@@ -3256,8 +3262,15 @@ lock_table_remove_low(
 			lock_table_remove_autoinc_lock(lock, trx);
 		}
 
-		ut_a(table->n_waiting_or_granted_auto_inc_locks > 0);
-		table->n_waiting_or_granted_auto_inc_locks--;
+		ut_ad(table->n_waiting_or_granted_auto_inc_locks);
+		--table->n_waiting_or_granted_auto_inc_locks;
+		break;
+	case LOCK_X:
+		ut_ad(table->n_lock_x_or_s);
+		--table->n_lock_x_or_s;
+		break;
+	default:
+		break;
 	}
 
 	UT_LIST_REMOVE(trx->lock.trx_locks, lock);
@@ -3369,6 +3382,16 @@ lock_table_other_has_incompatible(
 	lock_mode		mode)	/*!< in: lock mode */
 {
 	lock_sys.assert_locked(*table);
+
+	switch (mode) {
+	case LOCK_IS:
+	case LOCK_IX:
+		if (UNIV_LIKELY(!table->n_lock_x_or_s)) {
+			return(NULL);
+		}
+	default:
+		break;
+	}
 
 	for (lock_t* lock = UT_LIST_GET_LAST(table->locks);
 	     lock;
