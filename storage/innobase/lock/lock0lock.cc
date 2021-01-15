@@ -5437,8 +5437,6 @@ lock_cancel_waiting_and_release(
 /*============================*/
 	lock_t*	lock)	/*!< in/out: waiting lock request */
 {
-	que_thr_t*	thr;
-
 	lock_sys.assert_locked();
 	mysql_mutex_assert_owner(&lock_sys.wait_mutex);
 	ut_ad(lock->trx->state == TRX_STATE_ACTIVE);
@@ -5462,11 +5460,7 @@ lock_cancel_waiting_and_release(
 
 	lock_reset_lock_and_trx_wait(lock);
 
-	/* The following function releases the trx from lock wait. */
-
-	thr = que_thr_end_lock_wait(lock->trx);
-
-	if (thr != NULL) {
+	if (que_thr_t *thr = que_thr_end_lock_wait(lock->trx)) {
 		lock_wait_release_thread_if_suspended(thr);
 	}
 

@@ -5718,8 +5718,9 @@ normal_return:
 	/*-------------------------------------------------------------*/
 	{
 		/* handler_index_cond_check() may pull TR_table search
-		   which initates another row_search_mvcc(). */
+		   which initiates another row_search_mvcc(). */
 		ut_d(ulint n_active_thrs= trx->lock.n_active_thrs);
+		ut_ad(n_active_thrs);
 		ut_d(trx->lock.n_active_thrs= 1);
 		thr->stop_no_error();
 		ut_d(trx->lock.n_active_thrs= n_active_thrs - 1);
