@@ -1611,11 +1611,11 @@ lock_rec_add_to_queue(
 		if (lock->is_waiting()
 		    && lock_rec_get_nth_bit(lock, heap_no)) {
 
-			break;
+			goto create;
 		}
 	}
 
-	if (lock == NULL && !(type_mode & LOCK_WAIT)) {
+	if (first_lock && !(type_mode & LOCK_WAIT)) {
 
 		/* Look for a similar record lock on the same page:
 		if one is found and there are no waiting lock requests,
@@ -1632,6 +1632,7 @@ lock_rec_add_to_queue(
 		}
 	}
 
+create:
 	lock_rec_create(
 #ifdef WITH_WSREP
 		NULL, NULL,
