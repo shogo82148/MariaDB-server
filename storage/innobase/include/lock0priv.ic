@@ -77,7 +77,7 @@ lock_rec_set_nth_bit(
 	ulint	byte_index;
 	ulint	bit_index;
 
-	ut_ad(lock->type() == LOCK_REC);
+	ut_ad(!lock->is_table());
 	lock_sys.assert_locked(lock->un_member.rec_lock.page_id);
 	ut_ad(i < lock->un_member.rec_lock.n_bits);
 
@@ -151,7 +151,7 @@ lock_rec_get_nth_bit(
 {
 	const byte*     b;
 
-	ut_ad(lock->type() == LOCK_REC);
+	ut_ad(!lock->is_table());
 
 	if (i >= lock->un_member.rec_lock.n_bits) {
 
@@ -172,7 +172,7 @@ lock_rec_get_next_on_page_const(
 /*============================*/
 	const lock_t*	lock)	/*!< in: a record lock */
 {
-  ut_ad(lock->type() == LOCK_REC);
+  ut_ad(!lock->is_table());
   const page_id_t page_id(lock->un_member.rec_lock.page_id);
   lock_sys.assert_locked(page_id);
 
@@ -238,7 +238,7 @@ lock_table_has(
 		}
 
 		ut_ad(trx == lock->trx);
-		ut_ad(lock->type() == LOCK_TABLE);
+		ut_ad(lock->is_table());
 		ut_ad(lock->un_member.tab_lock.table);
 
 		if (table == lock->un_member.tab_lock.table

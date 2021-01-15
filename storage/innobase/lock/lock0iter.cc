@@ -53,7 +53,7 @@ lock_queue_iterator_reset(
 
 	iter->current_lock = lock;
 
-	if (bit_no != ULINT_UNDEFINED || lock->type() != LOCK_REC) {
+	if (bit_no != ULINT_UNDEFINED || lock->is_table()) {
 		iter->bit_no = bit_no;
 	} else {
 		iter->bit_no = lock_rec_find_set_bit(lock);
@@ -73,7 +73,7 @@ lock_queue_iterator_get_prev(
 {
   lock_sys.assert_locked();
 
-  const lock_t *prev_lock= iter->current_lock->type() == LOCK_REC
+  const lock_t *prev_lock= !iter->current_lock->is_table()
     ? lock_rec_get_prev(iter->current_lock, iter->bit_no)
     : UT_LIST_GET_PREV(un_member.tab_lock.locks, iter->current_lock);
 

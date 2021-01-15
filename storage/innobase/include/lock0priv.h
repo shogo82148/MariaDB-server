@@ -95,10 +95,10 @@ ib_lock_t::print(std::ostream& out) const
 
   out << ")";
 
-  if (is_record_lock())
-    out << un_member.rec_lock;
-  else
+  if (is_table())
     out << un_member.tab_lock;
+  else
+    out << un_member.rec_lock;
 
   out << "]";
   return out;
@@ -501,7 +501,7 @@ lock_rec_set_nth_bit(
 @return previous value of the bit */
 inline byte lock_rec_reset_nth_bit(lock_t* lock, ulint i)
 {
-	ut_ad(lock->type() == LOCK_REC);
+	ut_ad(!lock->is_table());
 	lock_sys.assert_locked(lock->un_member.rec_lock.page_id);
 	ut_ad(i < lock->un_member.rec_lock.n_bits);
 
