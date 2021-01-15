@@ -3383,14 +3383,11 @@ lock_table_other_has_incompatible(
 {
 	lock_sys.assert_locked(*table);
 
-	switch (mode) {
-	case LOCK_IS:
-	case LOCK_IX:
-		if (UNIV_LIKELY(!table->n_lock_x_or_s)) {
-			return(NULL);
-		}
-	default:
-		break;
+	static_assert(LOCK_IS == 0, "compatibility");
+	static_assert(LOCK_IX == 1, "compatibility");
+
+	if (UNIV_LIKELY(mode <= LOCK_IX && !table->n_lock_x_or_s)) {
+		return(NULL);
 	}
 
 	for (lock_t* lock = UT_LIST_GET_LAST(table->locks);
