@@ -2301,8 +2301,8 @@ private:
 	Atomic_counter<uint32_t>		n_ref_count;
 
 public:
-	/** List of locks on the table. Protected by lock_sys.latch. */
-	table_lock_list_t			locks;
+  /** List of locks on the table. Protected by lock_sys.assert_locked(lock). */
+  table_lock_list_t locks;
 
 	/** Timestamp of the last modification of this table. */
 	time_t					update_time;
