@@ -5528,7 +5528,8 @@ ha_innobase::open(const char* name, int, uint open_flags)
 	if (!trx) {
 		DBUG_RETURN(HA_ERR_OUT_OF_MEM);
 	}
-	if (open_flags & HA_OPEN_FOR_REPAIR) {
+	err = fk_check_legacy_storage(ib_table->name.m_name, trx);
+	if (err == DB_LEGACY_FK && (open_flags & HA_OPEN_FOR_REPAIR)) {
 		err = fk_upgrade_legacy_storage(ib_table, trx, thd, table->s);
 		if (err == DB_LEGACY_FK) {
 			err = fk_check_legacy_storage(ib_table->name.m_name,
@@ -5542,10 +5543,11 @@ ha_innobase::open(const char* name, int, uint open_flags)
 					table_share->table_name.str);
 			}
 		}
-	} else {
-		err = fk_check_legacy_storage(ib_table->name.m_name, trx);
 	}
-	trx_commit_for_mysql(trx);
+	if (trx->state != TRX_STATE_NOT_STARTED
+	    && trx->state != TRX_STATE_COMMITTED_IN_MEMORY) {
+		trx_commit_for_mysql(trx);
+	}
 	trx->error_state = DB_SUCCESS;
 	trx->free();
 	if (err != DB_SUCCESS) {
@@ -12212,6 +12214,15 @@ create_table_info_t::check_legacy_fk()
 	char   table_name[MAX_FULL_NAME_LEN + 1];
 	char*  bufptr = table_name;
 	size_t len;
+
+	dberr_t err = fk_legacy_storage_exists(false);
+	if (err == DB_TABLE_NOT_FOUND) {
+		return 0;
+	}
+	if (err != DB_SUCCESS) {
+		return convert_error_code_to_mysql(err, 0, NULL);
+	}
+
 	if (dict_table_t::build_name(LEX_STRING_WITH_LEN(m_form->s->db),
 				     LEX_STRING_WITH_LEN(m_form->s->table_name),
 				     bufptr, len)) {
@@ -12219,7 +12230,7 @@ create_table_info_t::check_legacy_fk()
 	}
 	row_drop_table_check_legacy_data data;
 
-	dberr_t err = row_drop_table_check_legacy_fk(m_trx, table_name, data);
+	err = row_drop_table_check_legacy_fk(m_trx, table_name, data);
 	if (err != DB_SUCCESS) {
 		return convert_error_code_to_mysql(err, 0, NULL);
 	}
@@ -19469,18 +19480,27 @@ static MYSQL_SYSVAR_BOOL(encrypt_temporary_tables, innodb_encrypt_temporary_tabl
   "Enrypt the temporary table data.",
   NULL, NULL, false);
 
+#ifdef WITH_INNODB_LEGACY_FOREIGN_STORAGE
 #ifdef UNIV_DEBUG
-
 static char* innodb_eval_sql;
 
 static int innodb_eval_sql_validate(THD *thd, st_mysql_sys_var*,
 					void* save, st_mysql_value* value)
 {
+	/* We cannot do that in innodb_eval_sql because of special conditions
+	   like lock->trx->dict_operation */
+	dberr_t err = DB_SUCCESS;
+	DBUG_EXECUTE_IF("fk_create_legacy_storage",
+			err = dict_create_or_check_foreign_constraint_tables(););
+	if (err != DB_SUCCESS) {
+		return 1;
+	}
+
 	/** Preamble to all SQL statements. */
-	static const char* sql_begin= "PROCEDURE P() IS\n";
+	static const char* sql_begin = "PROCEDURE P() IS\n";
 
 	/** Postamble to non-committing SQL statements. */
-	static const char* sql_end= "\nEND;\n";
+	static const char* sql_end = "\nEND;\n";
 
 	char	*sql, *str;
 	char	buff[8192]; // size doesn't matter: val_str() reallocates
@@ -19517,7 +19537,7 @@ mem_err:
 
 	pars_info_t* info      = pars_info_create();
 	info->fatal_syntax_err = false;
-	dberr_t err	       = que_eval_sql(info, str, true, trx);
+	err	   	       = que_eval_sql(info, str, true, trx);
 	ut_free(str);
 	if (err != DB_SUCCESS) {
 		trx->op_info = "Rollback of internal trx on innodb_eval_sql";
@@ -19548,6 +19568,7 @@ static MYSQL_SYSVAR_STR(eval_sql,
   "Evaluate internal SQL",
   innodb_eval_sql_validate, NULL, NULL);
 #endif /* UNIV_DEBUG */
+#endif /* WITH_INNODB_LEGACY_FOREIGN_STORAGE */
 
 static struct st_mysql_sys_var* innobase_system_variables[]= {
   MYSQL_SYSVAR(autoextend_increment),
@@ -19711,7 +19732,9 @@ static struct st_mysql_sys_var* innobase_system_variables[]= {
   MYSQL_SYSVAR(dict_stats_disabled_debug),
   MYSQL_SYSVAR(master_thread_disabled_debug),
   MYSQL_SYSVAR(sync_debug),
+#ifdef WITH_INNODB_LEGACY_FOREIGN_STORAGE
   MYSQL_SYSVAR(eval_sql),
+#endif /* WITH_INNODB_LEGACY_FOREIGN_STORAGE */
 #endif /* UNIV_DEBUG */
   MYSQL_SYSVAR(force_primary_key),
   MYSQL_SYSVAR(fatal_semaphore_wait_threshold),
@@ -21465,6 +21488,66 @@ fk_upgrade_push_fk(
 	return 1;
 }
 
+static ibool
+pars_get_true(
+	void* row __attribute__((unused)),	/*!< in: sel_node_t* */
+	void* user_arg) 			/*!< in: bool do_upgrade */
+{
+	*(bool*)user_arg = true;
+	return 0;
+}
+
+/** Drop SYS_FOREIGN[_COLS] tables if they are empty */
+dberr_t
+fk_cleanup_legacy_storage(bool lock_dict_mutex, trx_t* trx)
+{
+	ut_ad(DB_SUCCESS == fk_legacy_storage_exists(lock_dict_mutex));
+	bool sys_foreign_nempty = false;
+	bool sys_forcols_nempty = false;
+	dberr_t err;
+	if (lock_dict_mutex) {
+		mutex_enter(&dict_sys.mutex);
+	}
+	dict_table_t* sys_foreign = dict_table_get_low("SYS_FOREIGN");
+	dict_table_t* sys_forcols = dict_table_get_low("SYS_FOREIGN_COLS");
+	if (lock_dict_mutex) {
+		mutex_exit(&dict_sys.mutex);
+	}
+	sys_foreign_nempty = !innobase_table_is_empty(sys_foreign);
+	sys_forcols_nempty = !innobase_table_is_empty(sys_forcols);
+	if (sys_foreign_nempty != sys_forcols_nempty) {
+		ut_ad(0);
+		return DB_CORRUPTION;
+	}
+	if (sys_foreign_nempty) {
+		ut_ad(sys_forcols_nempty);
+		return DB_SUCCESS;
+	}
+
+	if (lock_table_has_locks(sys_foreign)) {
+		fk_release_locks(sys_foreign);
+	}
+	if (lock_table_has_locks(sys_forcols)) {
+		fk_release_locks(sys_forcols);
+	}
+	ut_ad(!lock_table_has_locks(sys_foreign));
+	ut_ad(!lock_table_has_locks(sys_forcols));
+
+	bool check_foreigns = trx->check_foreigns;
+	trx->check_foreigns = false;
+	err = row_drop_table_for_mysql("SYS_FOREIGN", trx, SQLCOM_DROP_DB,
+				       false, true, true);
+	if (err != DB_SUCCESS) {
+		trx->check_foreigns = check_foreigns;
+		return err;
+	}
+	trx->check_foreigns = false;
+	err = row_drop_table_for_mysql("SYS_FOREIGN_COLS", trx, SQLCOM_DROP_DB,
+				       false, true, true);
+	trx->check_foreigns = check_foreigns;
+	return err;
+}
+
 /** Load and delete legacy foreign data from SYS_FOREIGN into TABLE_SHARE;
  *  Update FRMs of share and referenced shares.
 @param[in]	table		dict_table_t data
@@ -21478,6 +21561,8 @@ fk_upgrade_legacy_storage(dict_table_t* table, trx_t* trx, THD* thd,
 {
 	pars_info_t*   info;
 	fk_legacy_data d(trx, table, share);
+
+	ut_ad(DB_SUCCESS == fk_legacy_storage_exists(true));
 
 	info = pars_info_create();
 	if (!info) {
@@ -21609,22 +21694,16 @@ fk_upgrade_legacy_storage(dict_table_t* table, trx_t* trx, THD* thd,
 		return err;
 	}
 
+	err = fk_cleanup_legacy_storage(true, trx);
+	if (err != DB_SUCCESS) {
+		return err;
+	}
+
 	return DB_LEGACY_FK;
 
 rollback:
 	ref_shares.rollback(thd);
 	return err;
-}
-
-static ibool
-fk_check_upgrade(
-	/*=================*/
-	void* row,	/*!< in: sel_node_t* */
-	void* user_arg) /*!< in: bool do_upgrade */
-{
-	bool& do_upgrade = *(bool*)user_arg;
-	do_upgrade	 = true;
-	return 0;
 }
 
 /** Test whether legacy foreign data exists in SYS_FOREIGN
@@ -21639,15 +21718,23 @@ fk_check_legacy_storage(const char* table_name, trx_t* trx)
 	pars_info_t* info;
 	bool	     do_upgrade = false;
 
+	dberr_t	     err = fk_legacy_storage_exists(true);
+	if (err == DB_TABLE_NOT_FOUND) {
+		return DB_SUCCESS;
+	}
+	if (err != DB_SUCCESS) {
+		return err;
+	}
+
 	info = pars_info_create();
 	if (!info) {
 		return DB_OUT_OF_MEMORY;
 	}
-	pars_info_bind_function(info, "fk_check_upgrade", fk_check_upgrade,
+	pars_info_bind_function(info, "get_upgrade", pars_get_true,
 				&do_upgrade);
 	pars_info_add_str_literal(info, "for_name", table_name);
 	static const char sql[] = "PROCEDURE FK_PROC () IS\n"
-				  "DECLARE FUNCTION fk_check_upgrade;\n"
+				  "DECLARE FUNCTION get_upgrade;\n"
 
 				  "DECLARE CURSOR c IS"
 				  " SELECT ID FROM SYS_FOREIGN"
@@ -21655,11 +21742,11 @@ fk_check_legacy_storage(const char* table_name, trx_t* trx)
 
 				  "BEGIN\n"
 				  "OPEN c;\n"
-				  "FETCH c INTO fk_check_upgrade();\n"
+				  "FETCH c INTO get_upgrade();\n"
 				  "CLOSE c;\n"
 				  "END;\n";
 
-	dberr_t err = que_eval_sql(info, sql, true, trx);
+	err = que_eval_sql(info, sql, true, trx);
 	if (err == DB_SUCCESS && do_upgrade) {
 		err = DB_LEGACY_FK;
 	}

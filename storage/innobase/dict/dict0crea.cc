@@ -1384,6 +1384,65 @@ dict_check_if_system_table_exists(
 }
 
 #ifdef WITH_INNODB_LEGACY_FOREIGN_STORAGE
+dberr_t
+fk_check_if_system_table_exists(
+/*==============================*/
+	const char*	tablename,	/*!< in: name of table */
+	ulint		num_fields,	/*!< in: number of fields */
+	ulint		num_indexes)	/*!< in: number of indexes */
+{
+	dict_table_t*	sys_table;
+	dberr_t		error = DB_SUCCESS;
+
+	ut_ad(mutex_own(&dict_sys.mutex));
+
+	sys_table = dict_table_get_low(tablename);
+
+	if (sys_table == NULL) {
+		error = DB_TABLE_NOT_FOUND;
+
+	} else if (UT_LIST_GET_LEN(sys_table->indexes) != num_indexes
+		   || sys_table->n_cols != num_fields) {
+		error = DB_CORRUPTION;
+
+	}
+
+	return(error);
+}
+
+dberr_t
+fk_legacy_storage_exists(bool lock_dict_mutex)
+{
+	dberr_t		sys_foreign_err;
+	dberr_t		sys_foreign_cols_err;
+	if (lock_dict_mutex) {
+		mutex_enter(&dict_sys.mutex);
+	}
+	sys_foreign_err = fk_check_if_system_table_exists(
+		"SYS_FOREIGN", DICT_NUM_FIELDS__SYS_FOREIGN + 1, 3);
+	sys_foreign_cols_err = fk_check_if_system_table_exists(
+		"SYS_FOREIGN_COLS", DICT_NUM_FIELDS__SYS_FOREIGN_COLS + 1, 1);
+	if (lock_dict_mutex) {
+		mutex_exit(&dict_sys.mutex);
+	}
+
+	if (sys_foreign_err == DB_SUCCESS
+	    && sys_foreign_cols_err == DB_SUCCESS) {
+		return(DB_SUCCESS);
+	}
+
+	// deferred drop is asynchronous
+	if ((sys_foreign_err == DB_TABLE_NOT_FOUND
+	     || sys_foreign_err == DB_SUCCESS)
+	    && (sys_foreign_cols_err == DB_TABLE_NOT_FOUND
+	     || sys_foreign_cols_err == DB_SUCCESS)) {
+		return(DB_TABLE_NOT_FOUND);
+	}
+
+	ut_ad(0);
+	return(DB_CORRUPTION);
+}
+
 /****************************************************************//**
 Creates the foreign key constraints system tables inside InnoDB
 at server bootstrap or server start if they are not found or are
@@ -1399,15 +1458,14 @@ dict_create_or_check_foreign_constraint_tables(void)
 	dberr_t		sys_foreign_err;
 	dberr_t		sys_foreign_cols_err;
 
-	ut_ad(!srv_any_background_activity());
-
 	/* Note: The master thread has not been started at this point. */
 
-
-	sys_foreign_err = dict_check_if_system_table_exists(
+	mutex_enter(&dict_sys.mutex);
+	sys_foreign_err = fk_check_if_system_table_exists(
 		"SYS_FOREIGN", DICT_NUM_FIELDS__SYS_FOREIGN + 1, 3);
-	sys_foreign_cols_err = dict_check_if_system_table_exists(
+	sys_foreign_cols_err = fk_check_if_system_table_exists(
 		"SYS_FOREIGN_COLS", DICT_NUM_FIELDS__SYS_FOREIGN_COLS + 1, 1);
+	mutex_exit(&dict_sys.mutex);
 
 	if (sys_foreign_err == DB_SUCCESS
 	    && sys_foreign_cols_err == DB_SUCCESS) {
@@ -1474,6 +1532,7 @@ dict_create_or_check_foreign_constraint_tables(void)
 		" FOR_COL_NAME CHAR, REF_COL_NAME CHAR);\n"
 		"CREATE UNIQUE CLUSTERED INDEX ID_IND"
 		" ON SYS_FOREIGN_COLS (ID, POS);\n"
+		"COMMIT WORK;\n"
 		"END;\n",
 		FALSE, trx);
 
@@ -1503,13 +1562,15 @@ dict_create_or_check_foreign_constraint_tables(void)
 
 	/* Note: The master thread has not been started at this point. */
 	/* Confirm and move to the non-LRU part of the table LRU list. */
-	sys_foreign_err = dict_check_if_system_table_exists(
+	mutex_enter(&dict_sys.mutex);
+	sys_foreign_err = fk_check_if_system_table_exists(
 		"SYS_FOREIGN", DICT_NUM_FIELDS__SYS_FOREIGN + 1, 3);
 	ut_a(sys_foreign_err == DB_SUCCESS);
 
-	sys_foreign_cols_err = dict_check_if_system_table_exists(
+	sys_foreign_cols_err = fk_check_if_system_table_exists(
 		"SYS_FOREIGN_COLS", DICT_NUM_FIELDS__SYS_FOREIGN_COLS + 1, 1);
 	ut_a(sys_foreign_cols_err == DB_SUCCESS);
+	mutex_exit(&dict_sys.mutex);
 
 	return(err);
 }

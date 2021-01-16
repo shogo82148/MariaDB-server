@@ -6138,6 +6138,16 @@ i_s_sys_foreign_fill_table(
 	DBUG_ENTER("i_s_sys_foreign_fill_table");
 	RETURN_IF_INNODB_NOT_STARTED(tables->schema_table_name.str);
 
+	mutex_enter(&dict_sys.mutex);
+	dberr_t err = fk_check_if_system_table_exists(
+		"SYS_FOREIGN", DICT_NUM_FIELDS__SYS_FOREIGN + 1, 3);
+	mutex_exit(&dict_sys.mutex);
+
+	if (err != DB_SUCCESS) {
+		my_error(ER_BAD_TABLE_ERROR, MYF(0), tables->alias);
+		DBUG_RETURN(1);
+	}
+
 	/* deny access to user without PROCESS_ACL privilege */
 	if (check_global_access(thd, PROCESS_ACL)) {
 
@@ -6330,6 +6340,16 @@ i_s_sys_foreign_cols_fill_table(
 
 	DBUG_ENTER("i_s_sys_foreign_cols_fill_table");
 	RETURN_IF_INNODB_NOT_STARTED(tables->schema_table_name.str);
+
+	mutex_enter(&dict_sys.mutex);
+	dberr_t err = fk_check_if_system_table_exists(
+		"SYS_FOREIGN_COLS", DICT_NUM_FIELDS__SYS_FOREIGN_COLS + 1, 1);
+	mutex_exit(&dict_sys.mutex);
+
+	if (err != DB_SUCCESS) {
+		my_error(ER_BAD_TABLE_ERROR, MYF(0), tables->alias);
+		DBUG_RETURN(1);
+	}
 
 	/* deny access to user without PROCESS_ACL privilege */
 	if (check_global_access(thd, PROCESS_ACL)) {

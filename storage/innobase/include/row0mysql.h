@@ -426,7 +426,8 @@ row_drop_table_for_mysql(
 	trx_t*			trx,
 	enum_sql_command	sqlcom,
 	bool			create_failed = false,
-	bool			nonatomic = true);
+	bool			nonatomic = true,
+	bool			is_temp_name = false);
 
 /** Drop a table after failed CREATE TABLE. */
 dberr_t row_drop_table_after_create_fail(const char* name, trx_t* trx);

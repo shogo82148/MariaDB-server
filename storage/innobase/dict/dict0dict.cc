@@ -3136,6 +3136,7 @@ dict_foreign_add_to_cache(
 	DBUG_RETURN(DB_SUCCESS);
 }
 
+#ifdef WITH_INNODB_LEGACY_FOREIGN_STORAGE
 /*********************************************************************//**
 Scans from pointer onwards. Stops if is at the start of a copy of
 'string' where characters are compared without case sensitivity, and
@@ -3350,6 +3351,7 @@ convert_id:
 
 	return(ptr);
 }
+#endif /* WITH_INNODB_LEGACY_FOREIGN_STORAGE */
 
 bool
 dict_table_t::build_name(
@@ -3489,6 +3491,7 @@ dict_get_referenced_table(
 	return (dict_name);
 }
 
+#ifdef WITH_INNODB_LEGACY_FOREIGN_STORAGE
 /*********************************************************************//**
 Removes MySQL comments from an SQL string. A comment is either
 (a) '#' to the end of the line,
@@ -3600,6 +3603,7 @@ end_of_string:
 		sptr++;
 	}
 }
+#endif /* WITH_INNODB_LEGACY_FOREIGN_STORAGE */
 
 /*********************************************************************//**
 Finds the highest [number] for foreign key constraints of the table. Looks

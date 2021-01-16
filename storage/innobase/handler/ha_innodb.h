@@ -1007,3 +1007,8 @@ dict_load_foreigns(
 						charset compatibility */
 	dict_err_ignore_t	ignore_err)	/*!< in: error to be ignored */
 	MY_ATTRIBUTE((warn_unused_result));
+
+/** Check whether the table is empty.
+@param[in]	table	table to be checked
+@return true if table is empty */
+bool innobase_table_is_empty(const dict_table_t *table);

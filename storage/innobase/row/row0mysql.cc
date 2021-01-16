@@ -2654,13 +2654,15 @@ skip:
 
 	dberr_t err = row_drop_table_for_mysql_in_background(name);
 
-	ut_free(name);
-
 	if (err != DB_SUCCESS) {
+		ut_free(name);
 		/* If the DROP fails for some table, we return, and let the
 		main thread retry later */
 		return(n_tables + n_tables_dropped);
 	}
+
+	DEBUG_SYNC_C("background_dropped_");
+	ut_free(name);
 
 	goto loop;
 }
@@ -3294,6 +3296,7 @@ dberr_t
 row_drop_table_check_legacy_fk(trx_t* trx, const char* table_name,
 			       row_drop_table_check_legacy_data& d)
 {
+	ut_ad(DB_SUCCESS == fk_legacy_storage_exists(false));
 	static const char sql_check[]
 		= "PROCEDURE FK_PROC () IS\n"
 		  "DECLARE FUNCTION row_drop_table_check_legacy_step;\n"
@@ -3323,6 +3326,10 @@ row_drop_table_check_legacy_fk(trx_t* trx, const char* table_name,
 
 	return DB_SUCCESS;
 }
+
+/** Drop SYS_FOREIGN[_COLS] tables if they are empty */
+dberr_t
+fk_cleanup_legacy_storage(bool lock_dict_mutex, trx_t* trx);
 #endif /* WITH_INNODB_LEGACY_FOREIGN_STORAGE */
 
 /** Drop a table for MySQL.
@@ -3343,7 +3350,8 @@ row_drop_table_for_mysql(
 	trx_t*			trx,
 	enum_sql_command	sqlcom,
 	bool			create_failed,
-	bool			nonatomic)
+	bool			nonatomic,
+	bool			is_temp_name)
 {
 	dberr_t		err;
 	dict_foreign_t*	foreign;
@@ -3392,8 +3400,9 @@ row_drop_table_for_mysql(
 
 	std::vector<pfs_os_file_t> detached_handles;
 
-	const bool is_temp_name = strstr(table->name.m_name,
-					 "/" TEMP_FILE_PREFIX);
+	if (!is_temp_name) {
+		is_temp_name = strstr(table->name.m_name, "/" TEMP_FILE_PREFIX);
+	}
 
 	if (table->is_temporary()) {
 		ut_ad(table->space == fil_system.temp_space);
@@ -3519,30 +3528,39 @@ row_drop_table_for_mysql(
 #ifdef WITH_INNODB_LEGACY_FOREIGN_STORAGE
 		row_drop_table_check_legacy_data data;
 
-		err = row_drop_table_check_legacy_fk(trx, table->name.m_name,
-						     data);
-		if (err != DB_SUCCESS) {
+		err = fk_legacy_storage_exists(false);
+		if (err == DB_CORRUPTION) {
 			goto funct_exit;
 		}
-		if (data.found) {
-			FILE* ef = dict_foreign_err_file;
+		if (err == DB_TABLE_NOT_FOUND) {
+			err = DB_SUCCESS;
+		} else {
+			ut_ad(err == DB_SUCCESS);
+			err = row_drop_table_check_legacy_fk(
+				trx, table->name.m_name, data);
+			if (err != DB_SUCCESS) {
+				goto funct_exit;
+			}
+			if (data.found) {
+				FILE* ef = dict_foreign_err_file;
 
-			err = DB_CANNOT_DROP_CONSTRAINT;
+				err = DB_CANNOT_DROP_CONSTRAINT;
 
-			mutex_enter(&dict_foreign_err_mutex);
-			rewind(ef);
-			ut_print_timestamp(ef);
+				mutex_enter(&dict_foreign_err_mutex);
+				rewind(ef);
+				ut_print_timestamp(ef);
 
-			fputs("  Cannot drop table ", ef);
-			ut_print_name(ef, trx, name);
-			fputs("\n"
-			      "because it is referenced by ",
-			      ef);
-			ut_print_name(ef, trx, data.foreign_name);
-			putc('\n', ef);
-			mutex_exit(&dict_foreign_err_mutex);
+				fputs("  Cannot drop table ", ef);
+				ut_print_name(ef, trx, name);
+				fputs("\n"
+				"because it is referenced by ",
+				ef);
+				ut_print_name(ef, trx, data.foreign_name);
+				putc('\n', ef);
+				mutex_exit(&dict_foreign_err_mutex);
 
-			goto funct_exit;
+				goto funct_exit;
+			}
 		}
 #endif	  /* WITH_INNODB_LEGACY_FOREIGN_STORAGE */
 	} // if (!srv_read_only_mode && trx->check_foreigns)
@@ -3598,8 +3616,7 @@ defer:
 	shouldn't have to. There should never be record locks on a table
 	that is going to be dropped. */
 
-	if (table->get_ref_count() > 0 || table->n_rec_locks > 0
-	    || lock_table_has_locks(table)) {
+	if (table->get_ref_count() > 0 || lock_table_has_locks(table)) {
 		goto defer;
 	}
 
@@ -3658,8 +3675,7 @@ defer:
 #ifdef WITH_INNODB_LEGACY_FOREIGN_STORAGE
 	if (sqlcom != SQLCOM_TRUNCATE
 	    && strchr(name, '/')
-	    && dict_table_get_low("SYS_FOREIGN")
-	    && dict_table_get_low("SYS_FOREIGN_COLS")) {
+	    && (DB_SUCCESS == fk_legacy_storage_exists(false))) {
 		err = que_eval_sql(
 			info,
 			"PROCEDURE DROP_FOREIGN_PROC () IS\n"
@@ -3681,6 +3697,10 @@ defer:
 			"END LOOP;\n"
 			"CLOSE fk;\n"
 			"END;\n", FALSE, trx);
+		if (err != DB_SUCCESS) {
+			goto error;
+		}
+		err = fk_cleanup_legacy_storage(false, trx);
 		if (err != DB_SUCCESS) {
 			goto error;
 		}
@@ -4069,6 +4089,7 @@ row_delete_constraint_low(
 	const char*	id,		/*!< in: constraint id */
 	trx_t*		trx)		/*!< in: transaction handle */
 {
+	ut_ad(DB_SUCCESS == fk_legacy_storage_exists(false));
 	pars_info_t*	info = pars_info_create();
 
 	pars_info_add_str_literal(info, "id", id);
@@ -4112,6 +4133,11 @@ row_delete_constraint(
 		err = row_delete_constraint_low(id, trx);
 	}
 
+	if (err != DB_SUCCESS) {
+		return err;
+	}
+
+	err = fk_cleanup_legacy_storage(false, trx);
 	return(err);
 }
 #endif /* WITH_INNODB_LEGACY_FOREIGN_STORAGE */
@@ -4336,6 +4362,15 @@ row_rename_table_for_mysql(
 	}
 
 #ifdef WITH_INNODB_LEGACY_FOREIGN_STORAGE
+	err = fk_legacy_storage_exists(false);
+	if (err == DB_CORRUPTION) {
+		goto end;
+	}
+	if (err == DB_TABLE_NOT_FOUND) {
+		err = DB_SUCCESS;
+		goto fk_skip_rename;
+	}
+
 	if (!new_is_tmp) {
 		/* Rename all constraints. */
 		char	new_table_name[MAX_TABLE_NAME_LEN + 1];
@@ -4470,6 +4505,7 @@ row_rename_table_for_mysql(
 	if (err != DB_SUCCESS) {
 		goto end;
 	}
+fk_skip_rename:
 #endif /* WITH_INNODB_LEGACY_FOREIGN_STORAGE */
 
 	if ((dict_table_has_fts_index(table)

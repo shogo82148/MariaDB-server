@@ -114,6 +114,13 @@ dict_create_index_tree_in_mem(
 	const trx_t*	trx);		/*!< in: InnoDB transaction handle */
 
 #ifdef WITH_INNODB_LEGACY_FOREIGN_STORAGE
+dberr_t
+fk_check_if_system_table_exists(
+/*==============================*/
+	const char*	tablename,	/*!< in: name of table */
+	ulint		num_fields,	/*!< in: number of fields */
+	ulint		num_indexes);	/*!< in: number of indexes */
+dberr_t fk_legacy_storage_exists(bool lock_dict_mutex);
 /****************************************************************//**
 Creates the foreign key constraints system tables inside InnoDB
 at server bootstrap or server start if they are not found or are
