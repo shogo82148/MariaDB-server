@@ -2266,10 +2266,14 @@ public:
 	/** Autoinc counter value to give to the next inserted row. */
 	ib_uint64_t				autoinc;
 
-	/** The transaction that currently holds the the AUTOINC lock on this
-	table. Protected by lock_sys.latch and table shard latch. */
-	/* FIXME: "peek" ... */
-	Atomic_relaxed<const trx_t*> autoinc_trx;
+  /** The transaction that currently holds the the AUTOINC lock on this table.
+  Protected by lock_sys.assert_locked(*this).
+  The thread that is executing autoinc_trx may read this field without
+  holding a latch, in row_lock_table_autoinc_for_mysql().
+  Only the autoinc_trx thread may clear this field; it cannot be
+  modified on the behalf of a transaction that is being handled by a
+  different thread. */
+  Atomic_relaxed<const trx_t*> autoinc_trx;
 
   /** Number of granted or pending autoinc_lock on this table. This
   value is set after acquiring the lock_sys.latch but

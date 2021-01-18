@@ -1801,15 +1801,9 @@ static void lock_grant(lock_t *lock)
   if (lock->mode() == LOCK_AUTO_INC)
   {
     dict_table_t *table= lock->un_member.tab_lock.table;
-
-    if (UNIV_UNLIKELY(table->autoinc_trx == lock->trx))
-      ib::error() << "Transaction already had an AUTO-INC lock!";
-    else
-    {
-      ut_ad(!table->autoinc_trx);
-      table->autoinc_trx= lock->trx;
-      ib_vector_push(lock->trx->autoinc_locks, &lock);
-    }
+    ut_ad(!table->autoinc_trx);
+    table->autoinc_trx= lock->trx;
+    ib_vector_push(lock->trx->autoinc_locks, &lock);
   }
 
   DBUG_PRINT("ib_lock", ("wait for trx " TRX_ID_FMT " ends", lock->trx->id));
@@ -3224,10 +3218,10 @@ lock_table_remove_low(
 	trx_t*		trx;
 	dict_table_t*	table;
 
-	lock_sys.assert_locked();
-
+	ut_ad(lock->is_table());
 	trx = lock->trx;
 	table = lock->un_member.tab_lock.table;
+	lock_sys.assert_locked(*table);
 
 	/* Remove the table from the transaction's AUTOINC vector, if
 	the lock that is being released is an AUTOINC lock. */
