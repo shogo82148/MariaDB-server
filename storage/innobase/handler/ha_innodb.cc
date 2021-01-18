@@ -4431,8 +4431,6 @@ static int innobase_close_connection(handlerton *hton, THD *thd)
   return 0;
 }
 
-void lock_cancel_waiting_and_release(lock_t *lock);
-
 /** Cancel any pending lock request associated with the current THD.
 @sa THD::awake() @sa ha_kill_query() */
 static void innobase_kill_query(handlerton*, THD *thd, enum thd_kill_levels)

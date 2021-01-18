@@ -733,7 +733,7 @@ static bool fill_locks_row(
 
 	if (!is_table) {
 		row->lock_index = ha_storage_put_str_memlim(
-			cache->storage, lock_rec_get_index_name(lock),
+			cache->storage, lock_rec_get_index(lock)->name,
 			MAX_ALLOWED_FOR_STORAGE(cache));
 
 		/* memory could not be allocated */

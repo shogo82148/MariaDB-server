@@ -443,9 +443,9 @@ granted the lock it was waiting for, which implies that the state can be changed
 asynchronously.
 
 All these operations take place within the context of locking. Therefore state
-changes within the locking code must acquire both lock_sys.latch and the
-trx->mutex when changing trx->lock.que_state to TRX_QUE_LOCK_WAIT or
-trx->lock.wait_lock to non-NULL but when the lock wait ends it is sufficient
+changes within the locking code must satisfy lock_sys.assert_locked(lock) and
+hold trx->mutex when changing trx->lock.que_state to TRX_QUE_LOCK_WAIT or
+trx->lock.wait_lock to non-NULL. When the lock wait ends it is sufficient
 to only acquire the trx->mutex.
 To query the state either of the mutexes is sufficient within the locking
 code and no mutex is required when the query thread is no longer waiting. */
@@ -469,6 +469,8 @@ struct trx_lock_t {
   Atomic_relaxed<lock_t*> wait_lock;
   /** condition variable for !wait_lock; used with lock_sys.wait_mutex */
   mysql_cond_t cond;
+  /** lock wait start time, protected only by lock_sys.wait_mutex */
+  my_hrtime_t suspend_time;
 
 	ib_uint64_t	deadlock_mark;	/*!< A mark field that is initialized
 					to and checked against lock_mark_counter
@@ -480,9 +482,6 @@ struct trx_lock_t {
 					transaction as a victim in deadlock
 					resolution, it sets this to true.
 					Protected by trx->mutex. */
-	my_hrtime_t	suspend_time;	/*!< lock wait start time, protected
-					only by lock_sys.wait_mutex */
-
 	que_thr_t*	wait_thr;	/*!< query thread belonging to this
 					trx that is in QUE_THR_LOCK_WAIT
 					state. For threads suspended in a
@@ -516,7 +515,8 @@ struct trx_lock_t {
 	trx_lock_list_t trx_locks;	/*!< locks requested by the transaction;
 					insertions are protected by trx->mutex
 					and lock_sys.latch; removals are
-					protected by lock_sys.latch */
+					protected by
+					lock_sys.assert_locked(lock) */
 
 	lock_list	table_locks;	/*!< All table locks requested by this
 					transaction, including AUTOINC locks */

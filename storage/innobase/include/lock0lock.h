@@ -560,15 +560,6 @@ lock_rec_get_index(
 	const lock_t*	lock);	/*!< in: lock */
 
 /*******************************************************************//**
-For a record lock, gets the name of the index on which the lock is.
-The string should not be free()'d or modified.
-@return name of the index */
-const char*
-lock_rec_get_index_name(
-/*====================*/
-	const lock_t*	lock);	/*!< in: lock */
-
-/*******************************************************************//**
 Check if there are any locks (table or rec) against table.
 @return TRUE if locks exist */
 bool
@@ -972,24 +963,8 @@ lock_rec_free_all_from_discard_page(
 /*================================*/
 	const buf_block_t*	block);		/*!< in: page to be discarded */
 
-#ifdef WITH_WSREP
-/*********************************************************************//**
-Cancels a waiting lock request and releases possible other transactions
-waiting behind it. */
-UNIV_INTERN
-void
-lock_cancel_waiting_and_release(
-/*============================*/
-	lock_t*	lock);	/*!< in/out: waiting lock request */
-
-/*******************************************************************//**
-Get lock mode and table/index name
-@return	string containing lock info */
-std::string
-lock_get_info(
-	const lock_t*);
-
-#endif /* WITH_WSREP */
+/** Cancel a waiting lock request and release possibly waiting transactions */
+void lock_cancel_waiting_and_release(lock_t *lock);
 
 #include "lock0lock.ic"
 

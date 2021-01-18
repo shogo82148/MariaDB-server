@@ -3227,24 +3227,17 @@ lock_table_remove_low(
 	the lock that is being released is an AUTOINC lock. */
 	switch (lock->mode()) {
 	case LOCK_AUTO_INC:
-		/* The table's AUTOINC lock can get transferred to
-		another transaction before we get here. */
+		ut_ad((table->autoinc_trx == trx) == !lock->is_waiting());
+
 		if (table->autoinc_trx == trx) {
 			table->autoinc_trx = NULL;
-		}
+			/* The locks must be freed in the reverse order from
+			the one in which they were acquired. This is to avoid
+			traversing the AUTOINC lock vector unnecessarily.
 
-		/* The locks must be freed in the reverse order from
-		the one in which they were acquired. This is to avoid
-		traversing the AUTOINC lock vector unnecessarily.
-
-		We only store locks that were granted in the
-		trx->autoinc_locks vector (see lock_table_create()
-		and lock_grant()). Therefore it can be empty and we
-		need to check for that. */
-
-		if (!lock->is_waiting()
-		    && !ib_vector_is_empty(trx->autoinc_locks)) {
-
+			We only store locks that were granted in the
+			trx->autoinc_locks vector (see lock_table_create()
+			and lock_grant()). */
 			lock_table_remove_autoinc_lock(lock, trx);
 		}
 
@@ -5412,54 +5405,34 @@ lock_rec_get_index(
   return lock->index;
 }
 
-/*******************************************************************//**
-For a record lock, gets the name of the index on which the lock is.
-The string should not be free()'d or modified.
-@return name of the index */
-const char*
-lock_rec_get_index_name(
-/*====================*/
-	const lock_t*	lock)	/*!< in: lock */
+/** Cancel a waiting lock request and release possibly waiting transactions */
+void lock_cancel_waiting_and_release(lock_t *lock)
 {
-  return lock_rec_get_index(lock)->name;
-}
+  lock_sys.assert_locked();
+  mysql_mutex_assert_owner(&lock_sys.wait_mutex);
+  trx_t *trx= lock->trx;
+  ut_ad(trx->state == TRX_STATE_ACTIVE);
 
-/*********************************************************************//**
-Cancels a waiting lock request and releases possible other transactions
-waiting behind it. */
-void
-lock_cancel_waiting_and_release(
-/*============================*/
-	lock_t*	lock)	/*!< in/out: waiting lock request */
-{
-	lock_sys.assert_locked();
-	mysql_mutex_assert_owner(&lock_sys.wait_mutex);
-	ut_ad(lock->trx->state == TRX_STATE_ACTIVE);
+  trx->lock.cancel= true;
 
-	lock->trx->lock.cancel = true;
+  if (!lock->is_table())
+    lock_rec_dequeue_from_page(lock);
+  else
+  {
+    if (trx->autoinc_locks)
+      lock_release_autoinc_locks(trx);
+    lock_table_dequeue(lock);
+    /* Remove the lock from table lock vector too. */
+    lock_trx_table_locks_remove(lock);
+  }
 
-	if (!lock->is_table()) {
-		lock_rec_dequeue_from_page(lock);
-	} else {
-		if (lock->trx->autoinc_locks != NULL) {
-			/* Release the transaction's AUTOINC locks. */
-			lock_release_autoinc_locks(lock->trx);
-		}
+  /* Reset the wait flag and the back pointer to lock in trx. */
+  lock_reset_lock_and_trx_wait(lock);
 
-		lock_table_dequeue(lock);
-		/* Remove the lock from table lock vector too. */
-		lock_trx_table_locks_remove(lock);
-	}
+  if (que_thr_t *thr = que_thr_end_lock_wait(trx))
+    lock_wait_release_thread_if_suspended(thr);
 
-	/* Reset the wait flag and the back pointer to lock in trx. */
-
-	lock_reset_lock_and_trx_wait(lock);
-
-	if (que_thr_t *thr = que_thr_end_lock_wait(lock->trx)) {
-		lock_wait_release_thread_if_suspended(thr);
-	}
-
-	lock->trx->lock.cancel = false;
+  trx->lock.cancel= false;
 }
 
 /*********************************************************************//**
