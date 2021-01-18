@@ -3826,6 +3826,7 @@ void lock_release(trx_t* trx)
 	}
 
 	mysql_mutex_unlock(&lock_sys.wait_mutex);
+	trx->lock.n_rec_locks = 0;
 }
 
 /*********************************************************************//**

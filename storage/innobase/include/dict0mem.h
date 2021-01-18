@@ -2295,10 +2295,10 @@ public:
 	in X mode of this table's indexes. */
 	ib_quiesce_t				quiesce;
 
-	/** Count of the number of record locks on this table. We use this to
-	determine whether we can evict the table from the dictionary cache.
-	Protected by LockGuard. */
-	Atomic_counter<ulint> n_rec_locks;
+  /** Count of the number of record locks on this table. We use this to
+  determine whether we can evict the table from the dictionary cache.
+  Protected by lock_sys.assert_locked(page_id). */
+  uint32_t n_rec_locks;
 
 private:
 	/** Count of how many handles are opened to this table. Dropping of the
