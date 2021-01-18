@@ -3245,6 +3245,7 @@ lock_table_remove_low(
 		--table->n_waiting_or_granted_auto_inc_locks;
 		break;
 	case LOCK_X:
+	case LOCK_S:
 		ut_ad(table->n_lock_x_or_s);
 		--table->n_lock_x_or_s;
 		break;
