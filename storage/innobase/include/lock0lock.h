@@ -751,10 +751,15 @@ public:
   { ut_ad(writer.load(std::memory_order_relaxed) != os_thread_get_curr_id()); }
   /** Assert that a page shard is exclusively latched by this thread */
   void assert_locked(const page_id_t) const { assert_locked(); }
+#ifdef UNIV_DEBUG
   /** Assert that a lock shard is exclusively latched by this thread */
-  inline void assert_locked(const lock_t &lock) const;
+  void assert_locked(const lock_t &lock) const;
   /** Assert that a table lock shard is exclusively latched by this thread */
-  inline void assert_locked(const dict_table_t &table) const;
+  void assert_locked(const dict_table_t &table) const;
+#else
+  void assert_locked(const lock_t &) const {}
+  void assert_locked(const dict_table_t &) const {}
+#endif
 
   /**
     Creates the lock system at database start.
@@ -841,6 +846,13 @@ struct LockMutexGuard
   LockMutexGuard(SRW_LOCK_ARGS(const char *file, unsigned line))
   { lock_sys.wr_lock(SRW_LOCK_ARGS(file, line)); }
   ~LockMutexGuard() { lock_sys.wr_unlock(); }
+};
+
+/** lock_sys.latch guard for a dict_table_t::id shard */
+struct LockTableGuard
+{
+  LockTableGuard(const dict_table_t &) { lock_sys.wr_lock(SRW_LOCK_CALL); }
+  ~LockTableGuard() { lock_sys.wr_unlock(); }
 };
 
 /** lock_sys.latch guard for a page_id_t shard */

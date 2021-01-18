@@ -49,7 +49,7 @@ lock_queue_iterator_reset(
 	ulint			bit_no)	/*!< in: record number in the
 					heap */
 {
-	lock_sys.assert_locked();
+	lock_sys.assert_locked(*lock);
 
 	iter->current_lock = lock;
 
@@ -71,7 +71,7 @@ lock_queue_iterator_get_prev(
 /*=========================*/
 	lock_queue_iterator_t*	iter)	/*!< in/out: iterator */
 {
-  lock_sys.assert_locked();
+  lock_sys.assert_locked(*iter->current_lock);
 
   const lock_t *prev_lock= !iter->current_lock->is_table()
     ? lock_rec_get_prev(iter->current_lock, iter->bit_no)

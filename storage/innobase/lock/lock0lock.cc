@@ -1156,17 +1156,19 @@ wsrep_print_wait_locks(
 }
 #endif /* WITH_WSREP */
 
+#ifdef UNIV_DEBUG
 /** Assert that a lock shard is exclusively latched by this thread */
-inline void lock_sys_t::assert_locked(const lock_t &) const
+void lock_sys_t::assert_locked(const lock_t &) const
 {
   assert_locked();
 }
 
 /** Assert that a table lock shard is exclusively latched by this thread */
-inline void lock_sys_t::assert_locked(const dict_table_t &) const
+void lock_sys_t::assert_locked(const dict_table_t &) const
 {
   assert_locked();
 }
+#endif
 
 /** Reset the wait status of a lock.
 @param[in,out]	lock	lock that was possibly being waited for */
@@ -3282,7 +3284,7 @@ lock_table_enqueue_waiting(
 	trx_t*		trx;
 	lock_t*		lock;
 
-	lock_sys.assert_locked();
+	lock_sys.assert_locked(*table);
 	ut_ad(!srv_read_only_mode);
 
 	trx = thr_get_trx(thr);
@@ -3454,7 +3456,7 @@ lock_table(
 		trx_set_rw_mode(trx);
 	}
 
-	LockMutexGuard g{SRW_LOCK_CALL};
+	LockTableGuard g{*table};
 
 	/* We have to check if the new lock is compatible with any locks
 	other transactions have in the table lock queue. */
@@ -3564,10 +3566,10 @@ lock_table_dequeue(
 			behind will get their lock requests granted, if
 			they are now qualified to it */
 {
-	lock_sys.assert_locked();
 	mysql_mutex_assert_owner(&lock_sys.wait_mutex);
 	ut_a(in_lock->is_table());
 	const dict_table_t* table = in_lock->un_member.tab_lock.table;
+	lock_sys.assert_locked(*table);
 	lock_t*	lock = UT_LIST_GET_NEXT(un_member.tab_lock.locks, in_lock);
 
 	lock_table_remove_low(in_lock);
@@ -3833,7 +3835,8 @@ lock_trx_table_locks_remove(
 {
 	trx_t*		trx = lock_to_remove->trx;
 
-	lock_sys.assert_locked();
+	ut_ad(lock_to_remove->is_table());
+	lock_sys.assert_locked(*lock_to_remove->un_member.tab_lock.table);
 
 	/* It is safe to read this because we are holding lock_sys.latch */
 	const bool have_mutex = trx->lock.cancel;
@@ -3916,10 +3919,10 @@ lock_table_print(FILE* file, const lock_t* lock)
 @param[in,out]	mtr	mini-transaction for accessing the record */
 static void lock_rec_print(FILE* file, const lock_t* lock, mtr_t& mtr)
 {
-	lock_sys.assert_locked(*lock);
 	ut_ad(!lock->is_table());
 
 	const page_id_t page_id(lock->un_member.rec_lock.page_id);
+	lock_sys.assert_locked(page_id);
 
 	fprintf(file, "RECORD LOCKS space id %u page no %u n bits " ULINTPF
 		" index %s of table ",
@@ -4240,7 +4243,7 @@ lock_table_queue_validate(
 {
 	const lock_t*	lock;
 
-	lock_sys.assert_locked();
+	lock_sys.assert_locked(*table);
 
 	for (lock = UT_LIST_GET_FIRST(table->locks);
 	     lock != NULL;
@@ -4303,7 +4306,7 @@ lock_rec_queue_validate(
 		lock_sys.wr_lock(SRW_LOCK_CALL);
 	}
 
-	lock_sys.assert_locked();
+	lock_sys.assert_locked(id);
 
 	if (!page_rec_is_user_rec(rec)) {
 
@@ -4332,7 +4335,7 @@ func_exit:
 	}
 
 	ut_ad(page_rec_is_leaf(rec));
-	lock_sys.assert_locked();
+	lock_sys.assert_locked(id);
 
 	const trx_id_t impl_trx_id = index && index->is_primary()
 		? lock_clust_rec_some_has_impl(rec, index, offsets)
