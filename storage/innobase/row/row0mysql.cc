@@ -688,14 +688,14 @@ row_mysql_handle_errors(
 
 	DBUG_ENTER("row_mysql_handle_errors");
 
-handle_new_error:
 	err = trx->error_state;
 
+handle_new_error:
 	ut_a(err != DB_SUCCESS);
 
 	trx->error_state = DB_SUCCESS;
 
-	DBUG_LOG("trx", "handle error: " << ut_strerr(err)
+	DBUG_LOG("trx", "handle error: " << err
 		 << ";id=" << ib::hex(trx->id) << ", " << trx);
 
 	switch (err) {
@@ -733,7 +733,8 @@ handle_new_error:
 		/* MySQL will roll back the latest SQL statement */
 		break;
 	case DB_LOCK_WAIT:
-		if (lock_wait(thr) != DB_SUCCESS) {
+		err = lock_wait(thr);
+		if (err != DB_SUCCESS) {
 			que_thr_stop_for_mysql(thr);
 			goto handle_new_error;
 		}
