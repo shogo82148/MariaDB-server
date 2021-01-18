@@ -233,23 +233,3 @@ dberr_t lock_wait(que_thr_t *thr)
 
   return trx->error_state;
 }
-
-/********************************************************************//**
-Releases a user OS thread waiting for a lock to be released, if the
-thread is already suspended. */
-void
-lock_wait_release_thread_if_suspended(
-/*==================================*/
-	que_thr_t*	thr)	/*!< in: query thread associated with the
-				user OS thread	 */
-{
-  lock_sys.assert_locked();
-  mysql_mutex_assert_owner(&lock_sys.wait_mutex);
-  trx_t *trx= thr_get_trx(thr);
-  if (trx->lock.was_chosen_as_deadlock_victim)
-  {
-    trx->error_state= DB_DEADLOCK;
-    trx->lock.was_chosen_as_deadlock_victim = false;
-  }
-  mysql_cond_signal(&trx->lock.cond);
-}

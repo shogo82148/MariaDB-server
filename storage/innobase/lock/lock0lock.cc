@@ -53,15 +53,6 @@ Created 5/7/1996 Heikki Tuuri
 /** The value of innodb_deadlock_detect */
 my_bool	innobase_deadlock_detect;
 
-/*********************************************************************//**
-Checks if a waiting record lock request still has to wait in a queue.
-@return lock that is causing the wait */
-static
-const lock_t*
-lock_rec_has_to_wait_in_queue(
-/*==========================*/
-	const lock_t*	wait_lock);	/*!< in: waiting record lock */
-
 extern "C" void thd_rpl_deadlock_check(MYSQL_THD thd, MYSQL_THD other_thd);
 extern "C" int thd_need_wait_reports(const MYSQL_THD thd);
 extern "C" int thd_need_ordering_with(const MYSQL_THD thd, const MYSQL_THD other_thd);
@@ -432,21 +423,23 @@ lock_sec_rec_cons_read_sees(
 */
 void lock_sys_t::create(ulint n_cells)
 {
-	ut_ad(this == &lock_sys);
+  ut_ad(this == &lock_sys);
+  ut_ad(!is_initialised());
 
-	m_initialised= true;
+  m_initialised= true;
 
-	latch.SRW_LOCK_INIT(lock_latch_key);
-	mysql_mutex_init(lock_wait_mutex_key, &wait_mutex, nullptr);
+  latch.SRW_LOCK_INIT(lock_latch_key);
+  mysql_mutex_init(lock_wait_mutex_key, &wait_mutex, nullptr);
 
-	rec_hash.create(n_cells);
-	prdt_hash.create(n_cells);
-	prdt_page_hash.create(n_cells);
+  rec_hash.create(n_cells);
+  prdt_hash.create(n_cells);
+  prdt_page_hash.create(n_cells);
 
-	if (!srv_read_only_mode) {
-		lock_latest_err_file = os_file_create_tmpfile();
-		ut_a(lock_latest_err_file);
-	}
+  if (!srv_read_only_mode)
+  {
+    lock_latest_err_file= os_file_create_tmpfile();
+    ut_a(lock_latest_err_file);
+  }
 }
 
 
@@ -525,23 +518,25 @@ void lock_sys_t::resize(ulint n_cells)
 /** Closes the lock system at database shutdown. */
 void lock_sys_t::close()
 {
-	ut_ad(this == &lock_sys);
+  ut_ad(this == &lock_sys);
 
-	if (!m_initialised) return;
+  if (!m_initialised)
+    return;
 
-	if (lock_latest_err_file != NULL) {
-		my_fclose(lock_latest_err_file, MYF(MY_WME));
-		lock_latest_err_file = NULL;
-	}
+  if (lock_latest_err_file)
+  {
+    my_fclose(lock_latest_err_file, MYF(MY_WME));
+    lock_latest_err_file= nullptr;
+  }
 
-	rec_hash.free();
-	prdt_hash.free();
-	prdt_page_hash.free();
+  rec_hash.free();
+  prdt_hash.free();
+  prdt_page_hash.free();
 
-	latch.destroy();
-	mysql_mutex_destroy(&wait_mutex);
+  latch.destroy();
+  mysql_mutex_destroy(&wait_mutex);
 
-	m_initialised= false;
+  m_initialised= false;
 }
 
 #ifdef WITH_WSREP
@@ -1792,6 +1787,45 @@ lock_rec_has_to_wait_in_queue(
 	return(NULL);
 }
 
+
+/** Moves a suspended query thread to the QUE_THR_RUNNING state and may release
+a worker thread to execute it. This function should be used to end
+the wait state of a query thread waiting for a lock or a stored procedure
+completion.
+@return the query thread that needs to be released. */
+static que_thr_t *que_thr_end_lock_wait(trx_t *trx)
+{
+  mysql_mutex_assert_owner(&lock_sys.wait_mutex);
+
+  que_thr_t *thr= trx->lock.wait_thr;
+  ut_ad(thr);
+  ut_ad(trx->lock.que_state == TRX_QUE_LOCK_WAIT);
+  ut_ad(thr->state == QUE_THR_LOCK_WAIT);
+
+  const bool was_active= thr->is_active;
+  thr->start_running();
+  if (was_active)
+    thr= nullptr;
+  trx->lock.que_state= TRX_QUE_RUNNING;
+  trx->lock.wait_thr= nullptr;
+
+  return thr;
+}
+
+
+/** Wake up a possibly waiting thread */
+static void lock_wait_release_thread_if_suspended(que_thr_t *thr)
+{
+  mysql_mutex_assert_owner(&lock_sys.wait_mutex);
+  trx_t *trx= thr_get_trx(thr);
+  if (trx->lock.was_chosen_as_deadlock_victim)
+  {
+    trx->error_state= DB_DEADLOCK;
+    trx->lock.was_chosen_as_deadlock_victim = false;
+  }
+  mysql_cond_signal(&trx->lock.cond);
+}
+
 /** Grant a waiting lock request and release the waiting transaction. */
 static void lock_grant(lock_t *lock)
 {
@@ -1833,6 +1867,7 @@ lock_rec_cancel(
 	lock_t*	lock)	/*!< in: waiting record lock request */
 {
 	ut_ad(!lock->is_table());
+	lock_sys.assert_locked(lock->un_member.rec_lock.page_id);
 
 	/* Reset the bit (there can be only one set bit) in the lock bitmap */
 	lock_rec_reset_nth_bit(lock, lock_rec_find_set_bit(lock));
@@ -3000,7 +3035,7 @@ lock_rec_restore_from_page_infimum(
 {
 	ulint	heap_no = page_rec_get_heap_no(rec);
 
-	LockGuard g{block->page.id()};
+	LockMultiGuard g{block->page.id(), donator->page.id()};
 
 	lock_rec_move(block, donator, heap_no, PAGE_HEAP_NO_INFIMUM);
 }
@@ -5412,7 +5447,7 @@ lock_rec_get_index(
 /** Cancel a waiting lock request and release possibly waiting transactions */
 void lock_cancel_waiting_and_release(lock_t *lock)
 {
-  lock_sys.assert_locked();
+  lock_sys.assert_locked(*lock);
   mysql_mutex_assert_owner(&lock_sys.wait_mutex);
   trx_t *trx= lock->trx;
   ut_ad(trx->state == TRX_STATE_ACTIVE);

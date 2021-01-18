@@ -569,15 +569,6 @@ lock_table_has_locks(
 					held on records in this table or on the
 					table itself */
 
-/********************************************************************//**
-Releases a user OS thread waiting for a lock to be released, if the
-thread is already suspended. */
-void
-lock_wait_release_thread_if_suspended(
-/*==================================*/
-	que_thr_t*	thr);	/*!< in: query thread associated with the
-				user OS thread	 */
-
 /** Wait for a lock to be released.
 @retval DB_DEADLOCK if this transaction was chosen as the deadlock victim
 @retval DB_INTERRUPTED if the execution was interrupted by the user

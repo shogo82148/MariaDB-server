@@ -169,45 +169,6 @@ que_thr_create(
 }
 
 /**********************************************************************//**
-Moves a suspended query thread to the QUE_THR_RUNNING state and may release
-a worker thread to execute it. This function should be used to end
-the wait state of a query thread waiting for a lock or a stored procedure
-completion.
-@return the query thread that needs to be released. */
-que_thr_t*
-que_thr_end_lock_wait(
-/*==================*/
-	trx_t*		trx)	/*!< in: transaction with que_state in
-				QUE_THR_LOCK_WAIT */
-{
-	que_thr_t*	thr;
-
-	lock_sys.assert_locked();
-	mysql_mutex_assert_owner(&lock_sys.wait_mutex);
-
-	thr = trx->lock.wait_thr;
-
-	ut_ad(thr != NULL);
-
-	ut_ad(trx->lock.que_state == TRX_QUE_LOCK_WAIT);
-	/* In MySQL this is the only possible state here */
-	ut_a(thr->state == QUE_THR_LOCK_WAIT);
-
-	bool was_active = thr->is_active;
-
-	thr->start_running();
-
-	trx->lock.que_state = TRX_QUE_RUNNING;
-
-	trx->lock.wait_thr = NULL;
-
-	/* In MySQL we let the OS thread (not just the query thread) to wait
-	for the lock to be released: */
-
-	return((!was_active && thr != NULL) ? thr : NULL);
-}
-
-/**********************************************************************//**
 Inits a query thread for a command. */
 UNIV_INLINE
 void
