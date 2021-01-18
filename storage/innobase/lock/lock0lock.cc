@@ -5926,6 +5926,7 @@ const trx_t*
 DeadlockChecker::search()
 {
 	lock_sys.assert_locked();
+	mysql_mutex_assert_owner(&lock_sys.wait_mutex);
 
 	ut_ad(m_start != NULL);
 	ut_ad(m_wait_lock != NULL);
@@ -5977,7 +5978,9 @@ DeadlockChecker::search()
 			continue;
 		}
 
-		if (lock->trx == m_start) {
+		trx_t *trx = lock->trx;
+
+		if (trx == m_start) {
 			/* Found a cycle. */
 			notify(lock);
 			return select_victim();
@@ -5996,10 +5999,13 @@ DeadlockChecker::search()
 		if (m_report_waiters
 		    && !(lock->type_mode & (LOCK_TABLE | LOCK_AUTO_INC))) {
 			thd_rpl_deadlock_check(m_start->mysql_thd,
-					       lock->trx->mysql_thd);
+					       trx->mysql_thd);
 		}
 
-		if (lock->trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
+		lock_t* wait_lock = trx->lock.wait_lock;
+
+		if (wait_lock
+		    && trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
 			/* Another trx ahead has requested a lock in an
 			incompatible mode, and is itself waiting for a lock. */
 
@@ -6010,7 +6016,7 @@ DeadlockChecker::search()
 				return m_start;
 			}
 
-			m_wait_lock = lock->trx->lock.wait_lock;
+			m_wait_lock = wait_lock;
 
 			lock = get_first_lock(&heap_no);
 
@@ -6058,6 +6064,7 @@ void
 DeadlockChecker::trx_rollback()
 {
 	lock_sys.assert_locked();
+	mysql_mutex_assert_owner(&lock_sys.wait_mutex);
 
 	trx_t*	trx = m_wait_lock->trx;
 
@@ -6068,14 +6075,12 @@ DeadlockChecker::trx_rollback()
 	}
 #endif
 
-	mysql_mutex_lock(&lock_sys.wait_mutex);
 	trx->mutex.wr_lock();
 
 	trx->lock.was_chosen_as_deadlock_victim = true;
 
 	lock_cancel_waiting_and_release(trx->lock.wait_lock);
 
-	mysql_mutex_unlock(&lock_sys.wait_mutex);
 	trx->mutex.wr_unlock();
 }
 
@@ -6117,6 +6122,7 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 
 	/* Try and resolve as many deadlocks as possible. */
 	do {
+		mysql_mutex_lock(&lock_sys.wait_mutex);
 		DeadlockChecker	checker(trx, lock, s_lock_mark_counter,
 					report_waiters);
 
@@ -6135,7 +6141,7 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 
 			MONITOR_INC(MONITOR_DEADLOCK);
 			srv_stats.lock_deadlock_count.inc();
-
+			mysql_mutex_unlock(&lock_sys.wait_mutex);
 			break;
 
 		} else if (victim_trx != NULL && victim_trx != trx) {
@@ -6150,6 +6156,7 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 			srv_stats.lock_deadlock_count.inc();
 		}
 
+		mysql_mutex_unlock(&lock_sys.wait_mutex);
 	} while (victim_trx != NULL && victim_trx != trx);
 
 	/* If the joining transaction was selected as the victim. */
