@@ -1334,7 +1334,6 @@ lock_rec_create_low(
 			UT_LIST_ADD_LAST(trx->lock.trx_locks, lock);
 
 			trx->lock.wait_thr = thr;
-			thr->state = QUE_THR_LOCK_WAIT;
 
 			/* have to release trx mutex for the duration of
 			   victim lock release. This will eventually call
@@ -1417,8 +1416,6 @@ lock_rec_enqueue_waiting(
 
 	trx_t* trx = thr_get_trx(thr);
 
-	ut_a(!que_thr_stop(thr));
-
 	switch (trx_get_dict_operation(trx)) {
 	case TRX_DICT_OP_NONE:
 		break;
@@ -1478,8 +1475,6 @@ lock_rec_enqueue_waiting(
 	trx->lock.wait_thr = thr;
 
 	trx->lock.was_chosen_as_deadlock_victim = false;
-
-	ut_a(que_thr_stop(thr));
 
 	DBUG_LOG("ib_lock", "trx " << ib::hex(trx->id)
 		 << " waits for lock in index " << index->name
@@ -1798,17 +1793,9 @@ static que_thr_t *que_thr_end_lock_wait(trx_t *trx)
 
   que_thr_t *thr= trx->lock.wait_thr;
   ut_ad(thr);
-  ut_ad(thr->state == QUE_THR_LOCK_WAIT);
-
-  const bool was_active= thr->is_active;
-  thr->start_running();
-  if (was_active)
-    thr= nullptr;
   trx->lock.wait_thr= nullptr;
-
   return thr;
 }
-
 
 /** Wake up a possibly waiting thread */
 static void lock_wait_release_thread_if_suspended(que_thr_t *thr)
@@ -3318,7 +3305,6 @@ lock_table_enqueue_waiting(
 	ut_ad(!srv_read_only_mode);
 
 	trx = thr_get_trx(thr);
-	ut_a(!que_thr_stop(thr));
 
 	switch (trx_get_dict_operation(trx)) {
 	case TRX_DICT_OP_NONE:
@@ -3369,8 +3355,6 @@ lock_table_enqueue_waiting(
 
 	trx->lock.wait_thr = thr;
 	trx->lock.was_chosen_as_deadlock_victim = false;
-
-	ut_a(que_thr_stop(thr));
 
 	MONITOR_INC(MONITOR_TABLELOCK_WAIT);
 
@@ -3656,8 +3640,6 @@ lock_table_for_trx(
 		que_fork_get_first_thr(
 			static_cast<que_fork_t*>(que_node_get_parent(thr))));
 
-	thr->start_running();
-
 run_again:
 	thr->run_node = thr;
 	thr->prev_node = thr->common.parent;
@@ -3666,11 +3648,7 @@ run_again:
 
 	trx->error_state = err;
 
-	if (UNIV_LIKELY(err == DB_SUCCESS)) {
-		thr->stop_no_error();
-	} else {
-		que_thr_stop_for_mysql(thr);
-
+	if (UNIV_UNLIKELY(err != DB_SUCCESS)) {
 		if (row_mysql_handle_errors(&err, trx, thr, NULL)) {
 			goto run_again;
 		}

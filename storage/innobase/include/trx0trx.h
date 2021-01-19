@@ -419,11 +419,6 @@ typedef std::vector<ib_lock_t*, ut_allocator<ib_lock_t*> >	lock_list;
 /** The locks and state of an active transaction. Protected by
 lock_sys.latch, trx->mutex or both. */
 struct trx_lock_t {
-#ifdef UNIV_DEBUG
-  /** number of active query threads; at most 1, except for the
-  dummy transaction in trx_purge() */
-  ulint n_active_thrs;
-#endif
   /** Lock request being waited for.
   Set to nonnull when holding both lock_sys.latch and trx->mutex,
   by the thread that is executing the transaction. Set to nullptr
@@ -445,7 +440,7 @@ struct trx_lock_t {
 					resolution, it sets this to true.
 					Protected by trx->mutex. */
 	que_thr_t*	wait_thr;	/*!< query thread belonging to this
-					trx that is in QUE_THR_LOCK_WAIT
+					trx that is in waiting
 					state. For threads suspended in a
 					lock wait, this is protected by
 					lock_sys.latch. Otherwise, this may

@@ -1823,8 +1823,6 @@ do_possible_lock_wait:
 	if (err == DB_LOCK_WAIT) {
 		trx->error_state = err;
 
-		que_thr_stop_for_mysql(thr);
-
 		thr->lock_state = QUE_THR_LOCK_ROW;
 
 		check_table->inc_fk_checks();

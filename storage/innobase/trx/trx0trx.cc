@@ -1581,15 +1581,7 @@ trx_commit_or_rollback_prepare(
 	case TRX_STATE_ACTIVE:
 	case TRX_STATE_PREPARED:
 	case TRX_STATE_PREPARED_RECOVERED:
-		/* If the trx is in a lock wait state, moves the waiting
-		query thread to the suspended state */
-
-		if (auto wait_thr = trx->lock.wait_thr) {
-			trx->lock.wait_thr = NULL;
-			wait_thr->state = QUE_THR_COMPLETED;
-		}
-
-		ut_ad(trx->lock.n_active_thrs == 1);
+		trx->lock.wait_thr = NULL;
 		return;
 
 	case TRX_STATE_COMMITTED_IN_MEMORY:

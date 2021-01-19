@@ -124,9 +124,7 @@ dberr_t lock_wait(que_thr_t *thr)
   trx->mutex.wr_lock();
   trx->error_state= DB_SUCCESS;
 
-  ut_ad(thr->is_active == (thr->state == QUE_THR_RUNNING));
-
-  if (thr->is_active)
+  if (!trx->lock.wait_lock)
   {
     /* The lock has already been released or this transaction
     was chosen as a deadlock victim: no need to suspend */
@@ -177,10 +175,7 @@ dberr_t lock_wait(que_thr_t *thr)
       default:
         if (trx_is_interrupted(trx))
           /* innobase_kill_query() can only set trx->error_state=DB_INTERRUPTED
-          for any transaction that is attached to a connection. The
-          assignment here is needed to avoid an assertion failure
-          on trx->lock.n_active_thrs during the rollback of a transaction
-          in the test rpl.rpl_parallel_optimistic. */
+          for any transaction that is attached to a connection. */
           trx->error_state= DB_INTERRUPTED;
         else if (!err)
           continue;
