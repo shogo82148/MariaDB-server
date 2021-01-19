@@ -1586,7 +1586,7 @@ trx_commit_or_rollback_prepare(
 
 		if (auto wait_thr = trx->lock.wait_thr) {
 			trx->lock.wait_thr = NULL;
-			wait_thr->state = QUE_THR_COMMAND_WAIT;
+			wait_thr->state = QUE_THR_COMPLETED;
 		}
 
 		ut_ad(trx->lock.n_active_thrs == 1);

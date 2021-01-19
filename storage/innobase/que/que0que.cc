@@ -146,10 +146,6 @@ que_thr_create(
 
 	thr->common.type = QUE_NODE_THR;
 
-	thr->state = QUE_THR_COMMAND_WAIT;
-
-	thr->lock_state = QUE_THR_LOCK_NOLOCK;
-
 	thr->prebuilt = prebuilt;
 
 	UT_LIST_ADD_LAST(parent->thrs, thr);
@@ -195,19 +191,9 @@ que_fork_scheduler_round_robin(
 		fork->state = QUE_FORK_ACTIVE;
 
 		fork->last_sel_node = NULL;
-
-		switch (thr->state) {
-		case QUE_THR_COMMAND_WAIT:
-		case QUE_THR_COMPLETED:
-			ut_a(!thr->is_active);
-			que_thr_init_command(thr);
-			break;
-
-		case QUE_THR_LOCK_WAIT:
-		default:
-			ut_error;
-
-		}
+		ut_ad(thr->state == QUE_THR_COMPLETED);
+		ut_a(!thr->is_active);
+		que_thr_init_command(thr);
 	}
 
 	fork->trx->mutex.wr_unlock();
@@ -228,57 +214,15 @@ que_fork_start_command(
 /*===================*/
 	que_fork_t*	fork)	/*!< in: a query fork */
 {
-	que_thr_t*	thr;
-	que_thr_t*	completed_thr = NULL;
-
 	fork->state = QUE_FORK_ACTIVE;
 
 	fork->last_sel_node = NULL;
 
-	completed_thr = NULL;
+	que_thr_t* thr = UT_LIST_GET_FIRST(fork->thrs);
 
-	/* Choose the query thread to run: usually there is just one thread,
-	but in a parallelized select, which necessarily is non-scrollable,
-	there may be several to choose from */
-
-	/* First we try to find a query thread in the QUE_THR_COMMAND_WAIT
-	state. Finally we try to find a query thread in the QUE_THR_COMPLETED
-	state */
-
-	/* We make a single pass over the thr list within which we note which
-	threads are ready to run. */
-	for (thr = UT_LIST_GET_FIRST(fork->thrs);
-	     thr != NULL;
-	     thr = UT_LIST_GET_NEXT(thrs, thr)) {
-
-		switch (thr->state) {
-		case QUE_THR_COMMAND_WAIT:
-
-			/* We have to send the initial message to query thread
-			to start it */
-
-			que_thr_init_command(thr);
-
-			return(thr);
-
-		case QUE_THR_COMPLETED:
-			if (!completed_thr) {
-				completed_thr = thr;
-			}
-
-			break;
-
-		case QUE_THR_RUNNING:
-		case QUE_THR_LOCK_WAIT:
-			ut_error;
-		}
-	}
-
-	if (completed_thr) {
-		thr = completed_thr;
+	if (thr) {
+		ut_ad(thr->state == QUE_THR_COMPLETED);
 		que_thr_init_command(thr);
-	} else {
-		ut_error;
 	}
 
 	return(thr);
@@ -550,7 +494,7 @@ que_thr_stop(
 
 	if (graph->state == QUE_FORK_COMMAND_WAIT) {
 
-		thr->state = QUE_THR_COMMAND_WAIT;
+		thr->state = QUE_THR_COMPLETED;
 
 	} else if (trx->lock.wait_thr) {
 		ut_ad(trx->lock.wait_thr == thr);
@@ -949,7 +893,6 @@ loop:
 	default:
 		ut_error;
 	case QUE_THR_COMPLETED:
-	case QUE_THR_COMMAND_WAIT:
 		/* Do nothing */
 		break;
 
