@@ -1804,7 +1804,6 @@ static que_thr_t *que_thr_end_lock_wait(trx_t *trx)
   thr->start_running();
   if (was_active)
     thr= nullptr;
-  trx->lock.que_state= TRX_QUE_RUNNING;
   trx->lock.wait_thr= nullptr;
 
   return thr;
@@ -4135,14 +4134,12 @@ void lock_trx_print_wait_and_mvcc_state(FILE *file, const trx_t *trx,
 	trx_print_latched(file, trx, 600);
 	trx->read_view.print_limits(file);
 
-	if (trx->lock.wait_thr) {
+	if (const lock_t* wait_lock = trx->lock.wait_lock) {
 
 		fprintf(file,
 			"------- TRX HAS BEEN WAITING %llu ns"
 			" FOR THIS LOCK TO BE GRANTED:\n",
 			now.val - trx->lock.suspend_time.val);
-
-		lock_t *wait_lock = trx->lock.wait_lock;
 
 		if (!wait_lock->is_table()) {
 			mtr_t mtr;

@@ -90,7 +90,6 @@ inline bool trx_t::rollback_finish()
     undo= nullptr;
   }
   commit_low();
-  lock.que_state= TRX_QUE_RUNNING;
   return false;
 }
 
@@ -139,7 +138,6 @@ inline void trx_t::rollback_low(trx_savept_t *savept)
       if (j->second.rollback(limit))
         mod_tables.erase(j);
     }
-    lock.que_state= TRX_QUE_RUNNING;
     MONITOR_INC(MONITOR_TRX_ROLLBACK_SAVEPOINT);
   }
 
@@ -634,8 +632,6 @@ trx_rollback_active(
 		goto func_exit;
 	}
 
-	ut_a(trx->lock.que_state == TRX_QUE_RUNNING);
-
 	if (!dictionary_locked || !trx->table_id) {
 	} else if (dict_table_t* table = dict_table_open_on_id(
 			   trx->table_id, TRUE, DICT_TABLE_OP_NORMAL)) {
@@ -905,8 +901,6 @@ trx_rollback_start(
 	que_t*	roll_graph = trx_roll_graph_build(trx);
 
 	trx->graph = roll_graph;
-
-	trx->lock.que_state = TRX_QUE_ROLLING_BACK;
 
 	return(que_fork_start_command(roll_graph));
 }

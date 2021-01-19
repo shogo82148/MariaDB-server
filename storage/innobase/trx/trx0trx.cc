@@ -149,8 +149,6 @@ trx_init(
 
 	trx->magic_n = TRX_MAGIC_N;
 
-	trx->lock.que_state = TRX_QUE_RUNNING;
-
 	trx->last_sql_stat_start.least_undo_no = 0;
 
 	ut_ad(!trx->read_view.is_open());
@@ -1587,7 +1585,6 @@ trx_commit_or_rollback_prepare(
 		query thread to the suspended state */
 
 		if (auto wait_thr = trx->lock.wait_thr) {
-			ut_ad(trx->lock.que_state == TRX_QUE_RUNNING);
 			trx->lock.wait_thr = NULL;
 			wait_thr->state = QUE_THR_COMMAND_WAIT;
 		}
@@ -1650,7 +1647,6 @@ trx_commit_step(
 
 		trx->commit();
 		ut_ad(trx->lock.wait_thr == NULL);
-		trx->lock.que_state = TRX_QUE_RUNNING;
 
 		thr = NULL;
 	} else {
@@ -1819,20 +1815,12 @@ state_ok:
 
 	newline = TRUE;
 
-	/* trx->lock.que_state of an ACTIVE transaction may change
-	while we are not holding trx->mutex. We perform a dirty read
-	for performance reasons. */
-
-	switch (trx->lock.que_state) {
-	case TRX_QUE_RUNNING:
-		if (trx->lock.wait_thr) {
-			fputs("LOCK WAIT ", f); break;
-		}
-		newline = FALSE; break;
-	case TRX_QUE_ROLLING_BACK:
-		fputs("ROLLING BACK ", f); break;
-	default:
-		fprintf(f, "que state %lu ", (ulong) trx->lock.que_state);
+	if (trx->in_rollback) { /* dirty read for performance reasons */
+		fputs("ROLLING BACK ", f);
+	} else if (trx->lock.wait_lock) {
+		fputs("LOCK WAIT ", f);
+	} else {
+		newline = FALSE;
 	}
 
 	if (n_trx_locks > 0 || heap_size > 400) {

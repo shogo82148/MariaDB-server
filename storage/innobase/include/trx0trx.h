@@ -416,26 +416,6 @@ The transaction must have mysql_thd assigned. */
 
 typedef std::vector<ib_lock_t*, ut_allocator<ib_lock_t*> >	lock_list;
 
-/*******************************************************************//**
-Latching protocol for trx_lock_t::que_state.  trx_lock_t::que_state
-captures the state of the query thread during the execution of a query.
-This is different from a transaction state. The query state of a transaction
-can be updated asynchronously by other threads.  The other threads can be
-system threads, like the timeout monitor thread or user threads executing
-other queries. Another thing to be mindful of is that there is a delay between
-when a query thread is put into LOCK_WAIT state and before it actually starts
-waiting.  Between these two events it is possible that the query thread is
-granted the lock it was waiting for, which implies that the state can be changed
-asynchronously.
-
-All these operations take place within the context of locking. Therefore state
-changes within the locking code must satisfy lock_sys.assert_locked(lock) and
-hold trx->mutex when changing trx->lock.wait_lock to non-NULL.
-When the lock wait ends it is sufficient
-to only acquire lock_sys.wait_mutex.
-To query the state either of the mutexes is sufficient within the locking
-code and no mutex is required when the query thread is no longer waiting. */
-
 /** The locks and state of an active transaction. Protected by
 lock_sys.latch, trx->mutex or both. */
 struct trx_lock_t {
@@ -444,8 +424,6 @@ struct trx_lock_t {
   dummy transaction in trx_purge() */
   ulint n_active_thrs;
 #endif
-  /** valid when trx->state == TRX_STATE_ACTIVE */
-  trx_que_t que_state;
   /** Lock request being waited for.
   Set to nonnull when holding both lock_sys.latch and trx->mutex,
   by the thread that is executing the transaction. Set to nullptr
@@ -1048,6 +1026,7 @@ public:
 #endif
     ut_ad(!read_view.is_open());
     ut_ad(!lock.wait_thr);
+    ut_ad(!lock.wait_lock);
     ut_ad(UT_LIST_GET_LEN(lock.trx_locks) == 0);
     ut_ad(lock.table_locks.empty());
     ut_ad(!autoinc_locks || ib_vector_is_empty(autoinc_locks));
