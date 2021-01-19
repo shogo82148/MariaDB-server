@@ -1589,7 +1589,7 @@ trx_commit_or_rollback_prepare(
 		if (trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
 
 			ut_a(trx->lock.wait_thr != NULL);
-			trx->lock.wait_thr->state = QUE_THR_SUSPENDED;
+			trx->lock.wait_thr->state = QUE_THR_COMMAND_WAIT;
 			trx->lock.wait_thr = NULL;
 
 			trx->lock.que_state = TRX_QUE_RUNNING;
