@@ -1782,31 +1782,19 @@ lock_rec_has_to_wait_in_queue(
 }
 
 
-/** Moves a suspended query thread to the QUE_THR_RUNNING state and may release
-a worker thread to execute it. This function should be used to end
-the wait state of a query thread waiting for a lock or a stored procedure
-completion.
-@return the query thread that needs to be released. */
-static que_thr_t *que_thr_end_lock_wait(trx_t *trx)
+/** Resume a lock wait */
+static void lock_wait_end(trx_t *trx)
 {
   mysql_mutex_assert_owner(&lock_sys.wait_mutex);
 
   que_thr_t *thr= trx->lock.wait_thr;
   ut_ad(thr);
-  trx->lock.wait_thr= nullptr;
-  return thr;
-}
-
-/** Wake up a possibly waiting thread */
-static void lock_wait_release_thread_if_suspended(que_thr_t *thr)
-{
-  mysql_mutex_assert_owner(&lock_sys.wait_mutex);
-  trx_t *trx= thr_get_trx(thr);
   if (trx->lock.was_chosen_as_deadlock_victim)
   {
     trx->error_state= DB_DEADLOCK;
-    trx->lock.was_chosen_as_deadlock_victim = false;
+    trx->lock.was_chosen_as_deadlock_victim= false;
   }
+  trx->lock.wait_thr= nullptr;
   mysql_cond_signal(&trx->lock.cond);
 }
 
@@ -1816,26 +1804,25 @@ static void lock_grant(lock_t *lock)
   lock_sys.assert_locked(*lock);
   mysql_mutex_assert_owner(&lock_sys.wait_mutex);
   lock_reset_lock_and_trx_wait(lock);
-  auto mutex= &lock->trx->mutex;
-  mutex->wr_lock();
+  trx_t *trx= lock->trx;
+  trx->mutex.wr_lock();
   if (lock->mode() == LOCK_AUTO_INC)
   {
     dict_table_t *table= lock->un_member.tab_lock.table;
     ut_ad(!table->autoinc_trx);
-    table->autoinc_trx= lock->trx;
-    ib_vector_push(lock->trx->autoinc_locks, &lock);
+    table->autoinc_trx= trx;
+    ib_vector_push(trx->autoinc_locks, &lock);
   }
 
-  DBUG_PRINT("ib_lock", ("wait for trx " TRX_ID_FMT " ends", lock->trx->id));
+  DBUG_PRINT("ib_lock", ("wait for trx " TRX_ID_FMT " ends", trx->id));
 
   /* If we are resolving a deadlock by choosing another transaction as
   a victim, then our original transaction may not be waiting anymore */
 
-  if (!lock->trx->lock.wait_thr);
-  else if (que_thr_t *thr= que_thr_end_lock_wait(lock->trx))
-    lock_wait_release_thread_if_suspended(thr);
+  if (trx->lock.wait_thr)
+    lock_wait_end(trx);
 
-  mutex->wr_unlock();
+  trx->mutex.wr_unlock();
 }
 
 /*************************************************************//**
@@ -1861,13 +1848,10 @@ lock_rec_cancel(
 
 	/* The following releases the trx from lock wait */
 	trx_t *trx = lock->trx;
-	auto mutex = &trx->mutex;
-	mutex->wr_lock();
-	if (que_thr_t* thr = que_thr_end_lock_wait(trx)) {
-		lock_wait_release_thread_if_suspended(thr);
-	}
+	trx->mutex.wr_lock();
+	lock_wait_end(trx);
 	mysql_mutex_unlock(&lock_sys.wait_mutex);
-	mutex->wr_unlock();
+	trx->mutex.wr_unlock();
 }
 
 /** Remove a record lock request, waiting or granted, from the queue and
@@ -5439,8 +5423,7 @@ void lock_cancel_waiting_and_release(lock_t *lock)
   /* Reset the wait flag and the back pointer to lock in trx. */
   lock_reset_lock_and_trx_wait(lock);
 
-  if (que_thr_t *thr = que_thr_end_lock_wait(trx))
-    lock_wait_release_thread_if_suspended(thr);
+  lock_wait_end(trx);
 
   trx->lock.cancel= false;
 }
