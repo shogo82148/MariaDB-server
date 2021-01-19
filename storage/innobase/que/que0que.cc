@@ -523,19 +523,12 @@ que_thr_node_step(
 	}
 
 	trx_t *trx= thr->graph->trx;
-
 	trx->mutex.wr_lock();
 
-	if (thr->graph->state != QUE_FORK_ACTIVE) {
-		switch (trx->lock.que_state) {
-		case TRX_QUE_LOCK_WAIT:
-			break;
-		case TRX_QUE_ROLLING_BACK:
-		case TRX_QUE_RUNNING:
-			/* Thread execution completed */
-			thr->state = QUE_THR_COMPLETED;
-			thr = NULL;
-		}
+	if (thr->graph->state == QUE_FORK_ACTIVE
+	    && trx->lock.que_state != TRX_QUE_LOCK_WAIT) {
+		thr->state = QUE_THR_COMPLETED;
+		thr = NULL;
 	}
 
 	trx->mutex.wr_unlock();
