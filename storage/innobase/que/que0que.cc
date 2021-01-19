@@ -582,15 +582,10 @@ count can be decremented and this function may only be called from inside
 que_run_threads! These restrictions exist to make the rollback code easier
 to maintain. */
 static
-void
+que_thr_t *
 que_thr_dec_refer_count(
 /*====================*/
-	que_thr_t*	thr,		/*!< in: query thread */
-	que_thr_t**	next_thr)	/*!< in/out: next query thread to run;
-					if the value which is passed in is
-					a pointer to a NULL pointer, then the
-					calling function can start running
-					a new query thread */
+	que_thr_t*	thr)		/*!< in: query thread */
 {
 	trx_t*		trx;
 
@@ -601,9 +596,6 @@ que_thr_dec_refer_count(
 	if (thr->state == QUE_THR_RUNNING) {
 
 		if (!que_thr_stop(thr)) {
-
-			ut_a(next_thr != NULL && *next_thr == NULL);
-
 			/* The reason for the thr suspension or wait was
 			already canceled before we came here: continue
 			running the thread.
@@ -621,15 +613,13 @@ que_thr_dec_refer_count(
 			otherwise nobody does it. */
 
 			trx->error_state = DB_SUCCESS;
-
-			*next_thr = thr;
-
-			return;
+			return thr;
 		}
 	}
 
 	ut_d(static_cast<que_fork_t*>(thr->common.parent)->set_active(false));
 	thr->is_active = false;
+	return nullptr;
 }
 
 /**********************************************************************//**
@@ -934,10 +924,10 @@ que_run_threads_low(
 			if there was a lock wait that already completed. */
 
 			trx->mutex.wr_lock();
-			que_thr_dec_refer_count(thr, &next_thr);
+			next_thr = que_thr_dec_refer_count(thr);
 			trx->mutex.wr_unlock();
 
-			if (next_thr != NULL) {
+			if (next_thr) {
 				thr = next_thr;
 			}
 		}
@@ -979,7 +969,7 @@ loop:
 			/* thr was chosen as a deadlock victim or there was
 			a lock wait timeout */
 			trx->mutex.wr_lock();
-			que_thr_dec_refer_count(thr, NULL);
+			que_thr_dec_refer_count(thr);
 			trx->mutex.wr_unlock();
 		} else {
 			goto loop;
