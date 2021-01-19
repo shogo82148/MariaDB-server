@@ -90,7 +90,7 @@ The commit or rollback can be seen as a subprocedure call.
 When the transaction starts to handle a rollback or commit.
 It builds a query graph which, when executed, will roll back
 or commit the incomplete transaction. The transaction
-is moved to the TRX_QUE_ROLLING_BACK or TRX_QUE_COMMITTING state.
+may be moved to the TRX_QUE_ROLLING_BACK state.
 If specified, the SQL cursors opened by the transaction are closed.
 When the execution of the graph completes, it is like returning
 from a subprocedure: the query thread which requested the operation

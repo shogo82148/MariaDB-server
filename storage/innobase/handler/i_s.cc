@@ -271,7 +271,7 @@ static ST_FIELD_INFO	innodb_trx_fields_info[] =
   Column("trx_id", ULonglong(), NOT_NULL),
 
 #define IDX_TRX_STATE		1
-  Column("trx_state", Varchar(TRX_QUE_STATE_STR_MAX_LEN + 1), NOT_NULL),
+  Column("trx_state", Varchar(13), NOT_NULL),
 
 #define IDX_TRX_STARTED		2
   Column("trx_started", Datetime(0), NOT_NULL),
