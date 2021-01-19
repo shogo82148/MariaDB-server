@@ -525,8 +525,7 @@ que_thr_node_step(
 	trx_t *trx= thr->graph->trx;
 	trx->mutex.wr_lock();
 
-	if (thr->graph->state == QUE_FORK_ACTIVE
-	    && trx->lock.que_state != TRX_QUE_LOCK_WAIT) {
+	if (thr->graph->state == QUE_FORK_ACTIVE && !trx->lock.wait_thr) {
 		thr->state = QUE_THR_COMPLETED;
 		thr = NULL;
 	}
@@ -553,9 +552,8 @@ que_thr_stop(
 
 		thr->state = QUE_THR_COMMAND_WAIT;
 
-	} else if (trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
-
-		trx->lock.wait_thr = thr;
+	} else if (trx->lock.wait_thr) {
+		ut_ad(trx->lock.wait_thr == thr);
 		thr->state = QUE_THR_LOCK_WAIT;
 
 	} else if (trx->error_state != DB_SUCCESS

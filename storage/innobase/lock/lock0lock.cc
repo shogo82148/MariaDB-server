@@ -958,7 +958,7 @@ wsrep_kill_victim(
 		(wsrep_thd_order_before(
 			trx->mysql_thd, lock->trx->mysql_thd))) {
 
-		if (lock->trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
+		if (lock->trx->lock.wait_thr) {
 			if (UNIV_UNLIKELY(wsrep_debug)) {
 				ib::info() << "WSREP: BF victim waiting\n";
 			}
@@ -1322,7 +1322,7 @@ lock_rec_create_low(
 			trx->mutex.wr_lock();
 		}
 		c_lock->trx->mutex.wr_lock();
-		if (c_lock->trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
+		if (c_lock->trx->lock.wait_thr) {
 
 			c_lock->trx->lock.was_chosen_as_deadlock_victim = TRUE;
 
@@ -1330,7 +1330,6 @@ lock_rec_create_low(
 				wsrep_print_wait_locks(c_lock);
 			}
 
-			trx->lock.que_state = TRX_QUE_LOCK_WAIT;
 			lock_set_lock_and_trx_wait(lock, trx);
 			UT_LIST_ADD_LAST(trx->lock.trx_locks, lock);
 
@@ -1476,7 +1475,7 @@ lock_rec_enqueue_waiting(
 		return DB_SUCCESS_LOCKED_REC;
 	}
 
-	trx->lock.que_state = TRX_QUE_LOCK_WAIT;
+	trx->lock.wait_thr = thr;
 
 	trx->lock.was_chosen_as_deadlock_victim = false;
 
@@ -1799,7 +1798,6 @@ static que_thr_t *que_thr_end_lock_wait(trx_t *trx)
 
   que_thr_t *thr= trx->lock.wait_thr;
   ut_ad(thr);
-  ut_ad(trx->lock.que_state == TRX_QUE_LOCK_WAIT);
   ut_ad(thr->state == QUE_THR_LOCK_WAIT);
 
   const bool was_active= thr->is_active;
@@ -1845,11 +1843,9 @@ static void lock_grant(lock_t *lock)
   DBUG_PRINT("ib_lock", ("wait for trx " TRX_ID_FMT " ends", lock->trx->id));
 
   /* If we are resolving a deadlock by choosing another transaction as
-  a victim, then our original transaction may not be in the
-  TRX_QUE_LOCK_WAIT state, and there is no need to end the lock wait
-  for it */
+  a victim, then our original transaction may not be waiting anymore */
 
-  if (lock->trx->lock.que_state != TRX_QUE_LOCK_WAIT);
+  if (!lock->trx->lock.wait_thr);
   else if (que_thr_t *thr= que_thr_end_lock_wait(lock->trx))
     lock_wait_release_thread_if_suspended(thr);
 
@@ -3130,7 +3126,7 @@ allocated:
 		mysql_mutex_lock(&lock_sys.wait_mutex);
 		c_lock->trx->mutex.wr_lock();
 
-		if (c_lock->trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
+		if (c_lock->trx->lock.wait_thr) {
 			c_lock->trx->lock.was_chosen_as_deadlock_victim = TRUE;
 
 			if (UNIV_UNLIKELY(wsrep_debug)) {
@@ -3372,7 +3368,7 @@ lock_table_enqueue_waiting(
 		return(DB_SUCCESS);
 	}
 
-	trx->lock.que_state = TRX_QUE_LOCK_WAIT;
+	trx->lock.wait_thr = thr;
 	trx->lock.was_chosen_as_deadlock_victim = false;
 
 	ut_a(que_thr_stop(thr));
@@ -4139,7 +4135,7 @@ void lock_trx_print_wait_and_mvcc_state(FILE *file, const trx_t *trx,
 	trx_print_latched(file, trx, 600);
 	trx->read_view.print_limits(file);
 
-	if (trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
+	if (trx->lock.wait_thr) {
 
 		fprintf(file,
 			"------- TRX HAS BEEN WAITING %llu ns"
@@ -6039,8 +6035,7 @@ DeadlockChecker::search()
 
 		lock_t* wait_lock = trx->lock.wait_lock;
 
-		if (wait_lock
-		    && trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
+		if (wait_lock && trx->lock.wait_thr) {
 			/* Another trx ahead has requested a lock in an
 			incompatible mode, and is itself waiting for a lock. */
 

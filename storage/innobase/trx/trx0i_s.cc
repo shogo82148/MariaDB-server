@@ -428,11 +428,13 @@ fill_trx_row(
 	row->trx_started = trx->start_time;
 	switch (trx->lock.que_state) {
 	case TRX_QUE_RUNNING:
-		row->trx_state = trx->state == TRX_STATE_COMMITTED_IN_MEMORY
-			? "COMMITTING" : "RUNNING";
-		break;
-	case TRX_QUE_LOCK_WAIT:
-		row->trx_state = "LOCK WAIT";
+		if (trx->state == TRX_STATE_COMMITTED_IN_MEMORY) {
+			row->trx_state = "COMMITTING";
+		} else if (trx->lock.wait_thr) {
+			row->trx_state = "LOCK WAIT";
+		} else {
+			row->trx_state = "RUNNING";
+		}
 		break;
 	case TRX_QUE_ROLLING_BACK:
 		row->trx_state = "ROLLING BACK";
@@ -1048,7 +1050,7 @@ add_trx_relevant_locks_to_cache(
 
 	/* If transaction is waiting we add the wait lock and all locks
 	from another transactions that are blocking the wait lock. */
-	if (trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
+	if (trx->lock.wait_thr) {
 
 		const lock_t*		curr_lock;
 		i_s_locks_row_t*	blocking_lock_row;
