@@ -217,17 +217,6 @@ ulint
 que_node_list_get_len(
 /*==================*/
 	que_node_t*	node_list);	/*!< in: node list, or NULL */
-/**********************************************************************//**
-Checks if graph, trx, or session is in a state where the query thread should
-be stopped.
-@return TRUE if should be stopped; NOTE that if the peek is made
-without reserving the trx_t::mutex, then another peek with the mutex
-reserved is necessary before deciding the actual stopping */
-UNIV_INLINE
-ibool
-que_thr_peek_stop(
-/*==============*/
-	que_thr_t*	thr);	/*!< in: query thread */
 /*********************************************************************//**
 Evaluate the given SQL
 @return error code or DB_SUCCESS */
