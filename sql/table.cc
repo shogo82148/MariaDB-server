@@ -2285,7 +2285,8 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
           else
             key_part->key_part_flag|= HA_VAR_LENGTH_PART;
           key_part->store_length+=HA_KEY_BLOB_LENGTH;
-          keyinfo->key_length+= HA_KEY_BLOB_LENGTH;
+          if (i < keyinfo->user_defined_key_parts)
+            keyinfo->key_length+= HA_KEY_BLOB_LENGTH;
         }
         if (field->type() == MYSQL_TYPE_BIT)
           key_part->key_part_flag|= HA_BIT_PART;
