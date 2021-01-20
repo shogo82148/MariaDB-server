@@ -107,10 +107,8 @@ private:
 	}
 
 	/** Check if the search is too deep. */
-	bool is_too_deep() const
-	{
-		return(m_n_elems > LOCK_MAX_DEPTH_IN_DEADLOCK_CHECK
-		       || m_cost > LOCK_MAX_N_STEPS_IN_DEADLOCK_CHECK);
+	bool is_too_deep() const {
+		return m_n_elems > 200 || m_cost > 1000000;
 	}
 
 	/** Save current state.
@@ -1218,7 +1216,6 @@ lock_rec_create_low(
 	bool		holds_trx_mutex)
 {
 	lock_t*		lock;
-	ulint		n_bits;
 	ulint		n_bytes;
 
 	lock_sys.assert_locked(page_id);
@@ -1244,9 +1241,7 @@ lock_rec_create_low(
 	}
 
 	if (UNIV_LIKELY(!(type_mode & (LOCK_PREDICATE | LOCK_PRDT_PAGE)))) {
-		/* Make lock bitmap bigger by a safety margin */
-		n_bits = page_dir_get_n_heap(page) + LOCK_PAGE_BITMAP_MARGIN;
-		n_bytes = 1 + n_bits / 8;
+		n_bytes = (page_dir_get_n_heap(page) + 7) / 8;
 	} else {
 		ut_ad(heap_no == PRDT_HEAPNO);
 
@@ -3799,7 +3794,7 @@ void lock_release(trx_t* trx)
 			lock_table_dequeue(lock);
 		}
 
-		if (count == LOCK_RELEASE_INTERVAL) {
+		if (count == 1000) {
 			/* Release the  mutex for a while, so that we
 			do not monopolize it */
 
