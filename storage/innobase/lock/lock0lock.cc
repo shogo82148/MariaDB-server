@@ -53,6 +53,98 @@ Created 5/7/1996 Heikki Tuuri
 /** The value of innodb_deadlock_detect */
 my_bool	innobase_deadlock_detect;
 
+#ifdef UNIV_DEBUG
+/** Assert that a lock shard is exclusively latched by this thread */
+void lock_sys_t::assert_locked(const lock_t &lock) const
+{
+  if (is_writer())
+    return;
+  if (lock.is_table())
+    assert_locked(*lock.un_member.tab_lock.table);
+  else
+    assert_locked(lock.un_member.rec_lock.page_id);
+}
+
+/** Assert that a table lock shard is exclusively latched by this thread */
+void lock_sys_t::assert_locked(const dict_table_t &table) const
+{
+  ut_ad(!table.is_temporary());
+
+  const os_thread_id_t current_thread= os_thread_get_curr_id();
+  if (writer.load(std::memory_order_relaxed) == current_thread)
+    return;
+  ut_ad(readers);
+  ut_ad(current_thread == table_latch_owners[table.id % LATCHES]);
+}
+
+/** Assert that a page shard is exclusively latched by this thread */
+void lock_sys_t::assert_locked(const page_id_t id) const
+{
+  const os_thread_id_t current_thread= os_thread_get_curr_id();
+  if (writer.load(std::memory_order_relaxed) == current_thread)
+    return;
+  ut_ad(readers);
+  ut_ad(current_thread == page_latch_owners[get_page_latch(id)]);
+}
+#endif
+
+/** Acquire a table lock mutex.
+@return parameter to unlock_table_latch() that the caller must invoke */
+inline unsigned lock_sys_t::lock_table_latch(table_id_t id)
+{
+  unsigned shard= static_cast<unsigned>(id % LATCHES);
+  ut_ad(readers);
+  table_latches[shard].wr_lock();
+  ut_ad(!table_latch_owners[shard]);
+  ut_d(table_latch_owners[shard]= os_thread_get_curr_id());
+  return shard;
+}
+
+/** Acquire a page lock mutex. */
+inline void lock_sys_t::lock_page_latch(unsigned shard)
+{
+  ut_ad(readers);
+  page_latches[shard].wr_lock();
+  ut_ad(!page_latch_owners[shard]);
+  ut_d(page_latch_owners[shard]= os_thread_get_curr_id());
+}
+
+/** Acquire a page lock mutex.
+@return parameter to unlock_page_latch() that the caller must invoke */
+inline unsigned lock_sys_t::lock_page_latch(page_id_t id)
+{
+  unsigned shard= get_page_latch(id);
+  lock_page_latch(shard);
+  return shard;
+}
+
+LockGuard::LockGuard(page_id_t id)
+{
+  lock_sys.rd_lock(SRW_LOCK_CALL);
+  shard= lock_sys.lock_page_latch(id);
+}
+
+LockMultiGuard::LockMultiGuard(const page_id_t id1, const page_id_t id2)
+{
+  ut_ad(id1.space() == id2.space());
+  shard1= lock_sys.get_page_latch(id1);
+  shard2= lock_sys.get_page_latch(id2);
+  if (shard1 > shard2)
+    std::swap(shard1, shard2);
+  lock_sys.rd_lock(SRW_LOCK_CALL);
+  lock_sys.lock_page_latch(shard1);
+  if (shard1 != shard2)
+    lock_sys.lock_page_latch(shard2);
+}
+
+LockMultiGuard::~LockMultiGuard()
+{
+  lock_sys.rd_unlock();
+  lock_sys.unlock_page_latch(shard1);
+  if (shard1 != shard2)
+    lock_sys.unlock_page_latch(shard2);
+}
+
 extern "C" void thd_rpl_deadlock_check(MYSQL_THD thd, MYSQL_THD other_thd);
 extern "C" int thd_need_wait_reports(const MYSQL_THD thd);
 extern "C" int thd_need_ordering_with(const MYSQL_THD thd, const MYSQL_THD other_thd);
@@ -429,6 +521,10 @@ void lock_sys_t::create(ulint n_cells)
   m_initialised= true;
 
   latch.SRW_LOCK_INIT(lock_latch_key);
+  for (size_t i= 0; i < LATCHES; i++)
+    page_latches[i].init();
+  for (size_t i= 0; i < LATCHES; i++)
+    table_latches[i].init();
   mysql_mutex_init(lock_wait_mutex_key, &wait_mutex, nullptr);
 
   rec_hash.create(n_cells);
@@ -441,7 +537,6 @@ void lock_sys_t::create(ulint n_cells)
     ut_a(lock_latest_err_file);
   }
 }
-
 
 #ifdef UNIV_PFS_RWLOCK
 /** Acquire exclusive lock_sys.latch */
@@ -534,6 +629,10 @@ void lock_sys_t::close()
   prdt_page_hash.free();
 
   latch.destroy();
+  for (size_t i= 0; i < LATCHES; i++)
+    page_latches[i].destroy();
+  for (size_t i= 0; i < LATCHES; i++)
+    table_latches[i].destroy();
   mysql_mutex_destroy(&wait_mutex);
 
   m_initialised= false;
@@ -1150,20 +1249,6 @@ wsrep_print_wait_locks(
 	}
 }
 #endif /* WITH_WSREP */
-
-#ifdef UNIV_DEBUG
-/** Assert that a lock shard is exclusively latched by this thread */
-void lock_sys_t::assert_locked(const lock_t &) const
-{
-  assert_locked();
-}
-
-/** Assert that a table lock shard is exclusively latched by this thread */
-void lock_sys_t::assert_locked(const dict_table_t &) const
-{
-  assert_locked();
-}
-#endif
 
 /** Reset the wait status of a lock.
 @param[in,out]	lock	lock that was possibly being waited for */
@@ -3454,7 +3539,8 @@ lock_table(
 		trx_set_rw_mode(trx);
 	}
 
-	LockTableGuard g{*table};
+	lock_sys.rd_lock(SRW_LOCK_CALL);
+	const unsigned shard = lock_sys.lock_table_latch(table->id);
 
 	/* We have to check if the new lock is compatible with any locks
 	other transactions have in the table lock queue. */
@@ -3482,7 +3568,9 @@ lock_table(
 		err = DB_SUCCESS;
 	}
 
+	lock_sys.rd_unlock();
 	trx->mutex.wr_unlock();
+	lock_sys.unlock_table_latch(shard);
 
 	return(err);
 }
@@ -6086,7 +6174,6 @@ or there is no deadlock (any more) */
 const trx_t*
 DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 {
-	lock_sys.assert_locked();
 	check_trx_state(trx);
 	ut_ad(!srv_read_only_mode);
 
@@ -6094,6 +6181,7 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 		return(NULL);
 	}
 
+	lock_sys.assert_locked();
 	/*  Release the mutex to obey the latching order.
 	This is safe, because DeadlockChecker::check_and_resolve()
 	is invoked when a lock wait is enqueued for the currently

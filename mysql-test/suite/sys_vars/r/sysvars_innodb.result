@@ -407,7 +407,7 @@ READ_ONLY	YES
 COMMAND_LINE_ARGUMENT	REQUIRED
 VARIABLE_NAME	INNODB_DEADLOCK_DETECT
 SESSION_VALUE	NULL
-DEFAULT_VALUE	ON
+DEFAULT_VALUE	OFF
 VARIABLE_SCOPE	GLOBAL
 VARIABLE_TYPE	BOOLEAN
 VARIABLE_COMMENT	Enable/disable InnoDB deadlock detector (default ON). if set to OFF, deadlock detection is skipped, and we rely on innodb_lock_wait_timeout in case of deadlock.

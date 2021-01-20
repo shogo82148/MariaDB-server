@@ -647,7 +647,7 @@ class lock_sys_t
   bool m_initialised;
 
   /** mutex proteting the locks */
-  MY_ALIGNED(CACHE_LINE_SIZE) srw_lock latch;
+  MY_ALIGNED(CPU_LEVEL1_DCACHE_LINESIZE) srw_lock latch;
 #ifdef UNIV_DEBUG
   /** The owner of exclusive latch (0 if none); protected by latch */
   std::atomic<os_thread_id_t> writer{0};
@@ -663,7 +663,7 @@ public:
   hash_table_t prdt_page_hash;
 
   /** mutex covering lock waits; @see trx_lock_t::wait_lock */
-  MY_ALIGNED(CACHE_LINE_SIZE) mysql_mutex_t wait_mutex;
+  MY_ALIGNED(CPU_LEVEL1_DCACHE_LINESIZE) mysql_mutex_t wait_mutex;
 private:
   /** Pending number of lock waits; protected by wait_mutex */
   ulint wait_pending;
@@ -673,6 +673,20 @@ private:
   ulint wait_time;
   /** Longest wait time; protected by wait_mutex */
   ulint wait_time_max;
+
+  /** Number of page_latches and table_latches */
+  static constexpr size_t LATCHES= 256;
+
+  /** Protection of rec_hash, prdt_hash, prdt_page_hash with latch.rd_lock() */
+  MY_ALIGNED(CPU_LEVEL1_DCACHE_LINESIZE) srw_mutex page_latches[LATCHES];
+  /** Protection of table locks together with latch.rd_lock() */
+  MY_ALIGNED(CPU_LEVEL1_DCACHE_LINESIZE) srw_mutex table_latches[LATCHES];
+#ifdef UNIV_DEBUG
+  MY_ALIGNED(CPU_LEVEL1_DCACHE_LINESIZE)
+  Atomic_relaxed<os_thread_id_t> page_latch_owners[LATCHES];
+  MY_ALIGNED(CPU_LEVEL1_DCACHE_LINESIZE)
+  Atomic_relaxed<os_thread_id_t> table_latch_owners[LATCHES];
+#endif
 public:
   /**
     Constructor.
@@ -734,20 +748,56 @@ public:
                            std::memory_order_relaxed));
     return true;
   }
+
+  /** Acquire a table lock mutex.
+  @return parameter to unlock_table_latch() that the caller must invoke */
+  inline unsigned lock_table_latch(table_id_t id);
+  /** Get a page lock mutex.
+  @return parameter to lock_page_latch() and unlock_page_latch() */
+  static unsigned get_page_latch(page_id_t id)
+  { return (id.space() + id.page_no()) % LATCHES; }
+  /** Acquire a page lock mutex. */
+  inline void lock_page_latch(unsigned shard);
+
+  /** Acquire a page lock mutex.
+  @return parameter to unlock_page_latch() that the caller must invoke */
+  unsigned lock_page_latch(page_id_t id);
+
+  /** Release a page latch mutex */
+  void unlock_page_latch(unsigned shard)
+  {
+    ut_ad(shard < LATCHES);
+    ut_ad(page_latch_owners[shard] == os_thread_get_curr_id());
+    page_latch_owners[shard]= 0;
+    page_latches[shard].wr_unlock();
+  }
+  /** Release a table latch mutex */
+  void unlock_table_latch(unsigned shard)
+  {
+    ut_ad(shard < LATCHES);
+    ut_ad(table_latch_owners[shard] == os_thread_get_curr_id());
+    table_latch_owners[shard]= 0;
+    table_latches[shard].wr_unlock();
+  }
+
+private:
+  /** @return whether the current thread is the lock_sys.latch writer */
+  bool is_writer() const
+  { return writer.load(std::memory_order_relaxed) == os_thread_get_curr_id(); }
+public:
   /** Assert that wr_lock() has been invoked by this thread */
-  void assert_locked() const
-  { ut_ad(writer.load(std::memory_order_relaxed) == os_thread_get_curr_id()); }
+  void assert_locked() const { ut_ad(is_writer()); }
   /** Assert that wr_lock() has not been invoked by this thread */
-  void assert_unlocked() const
-  { ut_ad(writer.load(std::memory_order_relaxed) != os_thread_get_curr_id()); }
-  /** Assert that a page shard is exclusively latched by this thread */
-  void assert_locked(const page_id_t) const { assert_locked(); }
+  void assert_unlocked() const { ut_ad(!is_writer()); }
 #ifdef UNIV_DEBUG
+  /** Assert that a page shard is exclusively latched by this thread */
+  void assert_locked(const page_id_t id) const;
   /** Assert that a lock shard is exclusively latched by this thread */
   void assert_locked(const lock_t &lock) const;
   /** Assert that a table lock shard is exclusively latched by this thread */
   void assert_locked(const dict_table_t &table) const;
 #else
+  void assert_locked(const page_id_t) const {}
   void assert_locked(const lock_t &) const {}
   void assert_locked(const dict_table_t &) const {}
 #endif
@@ -839,26 +889,24 @@ struct LockMutexGuard
   ~LockMutexGuard() { lock_sys.wr_unlock(); }
 };
 
-/** lock_sys.latch guard for a dict_table_t::id shard */
-struct LockTableGuard
-{
-  LockTableGuard(const dict_table_t &) { lock_sys.wr_lock(SRW_LOCK_CALL); }
-  ~LockTableGuard() { lock_sys.wr_unlock(); }
-};
-
 /** lock_sys.latch guard for a page_id_t shard */
 struct LockGuard
 {
-  LockGuard(const page_id_t) { lock_sys.wr_lock(SRW_LOCK_CALL); }
-  ~LockGuard() { lock_sys.wr_unlock(); }
+  LockGuard(const page_id_t id);
+  ~LockGuard() { lock_sys.rd_unlock(); lock_sys.unlock_page_latch(shard); }
+private:
+  /** The shard */
+  unsigned shard;
 };
 
 /** lock_sys.latch guard for 2 page_id_t shards */
 struct LockMultiGuard
 {
-  LockMultiGuard(const page_id_t, const page_id_t)
-  { lock_sys.wr_lock(SRW_LOCK_CALL); }
-  ~LockMultiGuard() { lock_sys.wr_unlock(); }
+  LockMultiGuard(const page_id_t id1, const page_id_t id2);
+  ~LockMultiGuard();
+private:
+  /** The shards */
+  unsigned shard1, shard2;
 };
 
 /*********************************************************************//**

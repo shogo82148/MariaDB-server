@@ -18584,7 +18584,7 @@ static MYSQL_SYSVAR_BOOL(deadlock_detect, innobase_deadlock_detect,
   "Enable/disable InnoDB deadlock detector (default ON)."
   " if set to OFF, deadlock detection is skipped,"
   " and we rely on innodb_lock_wait_timeout in case of deadlock.",
-  NULL, NULL, TRUE);
+  NULL, NULL, FALSE);
 
 static MYSQL_SYSVAR_UINT(fill_factor, innobase_fill_factor,
   PLUGIN_VAR_RQCMDARG,
