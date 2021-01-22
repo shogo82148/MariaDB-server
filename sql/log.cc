@@ -10654,7 +10654,6 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
         truncate_reset_done= false;
         truncate_validated= true;
         rpl_global_gtid_binlog_state.reset_nolock();
-        id_binlog= 0;
 
         if (round > 1 &&
             find_log_pos(linfo, binlog_checkpoint_name, 1))
@@ -10663,6 +10662,8 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
                           "for recovery. Aborting.", binlog_checkpoint_name);
           goto err2;
         }
+        id_binlog= !strcmp(linfo->log_file_name, last_log_name) ?
+          UINT_MAX : 0;
         round++;
       }
     }
