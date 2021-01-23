@@ -14,7 +14,7 @@
 #
 # ==== References ====
 #
-# MDEV-21117: --tc-heuristic-recover=rollback is not replication safe
+# MDEV-21117: recovery for --rpl-semi-sync-slave-enabled server
 
 
 --source include/have_innodb.inc
