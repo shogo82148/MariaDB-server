@@ -29083,7 +29083,19 @@ select_handler *SELECT_LEX::find_select_handler(THD *thd)
       return 0;
   if (master_unit()->outer_select())
     return 0;
-  for (TABLE_LIST *tbl= join->tables_list; tbl; tbl= tbl->next_global)
+
+  TABLE_LIST *tbl= nullptr;
+  if (thd->lex->sql_command != SQLCOM_INSERT_SELECT)
+  {
+    tbl= join->tables_list;
+  } else if (thd->lex->query_tables &&
+                thd->lex->query_tables->next_global) {
+    tbl= thd->lex->query_tables->next_global;
+  } else {
+    return 0;
+  }
+
+  for (;tbl; tbl= tbl->next_global)
   {
     if (!tbl->table)
       continue;
