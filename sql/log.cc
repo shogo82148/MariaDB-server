@@ -10326,10 +10326,11 @@ Recovery_context::Recovery_context() :
   prev_event_pos(0),
   truncate_validated(false), truncate_reset_done(false),
   id_binlog(UINT_MAX),
-  cs_alg(BINLOG_CHECKSUM_ALG_UNDEF), single_binlog(false),
-  last_gtid_coord({0, 0}), binlog_truncate_coord({0, 0}),
-  binlog_unsafe_coord({0, 0})
+  cs_alg(BINLOG_CHECKSUM_ALG_UNDEF), single_binlog(false)
 {
+  last_gtid_coord= {0, 0};
+  binlog_truncate_coord= {0, 0};
+  binlog_unsafe_coord= {0, 0};
   binlog_truncate_file_name[0]= 0;
   binlog_unsafe_file_name  [0]= 0;
 }
