@@ -1409,6 +1409,10 @@ public:
 #endif
   uint max_keys; /* Size of allocated key_info array. */
   bool stats_is_read;     /* Persistent statistics is read for the table */
+  /*
+    Set to TRUE when histogram statistics is read for the table
+    Gets reset in TABLE::init()
+  */
   bool histograms_are_read;
   MDL_ticket *mdl_ticket;
 
